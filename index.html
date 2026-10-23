@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2f7d6d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="家計簿">
+  <title>家計簿</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 id="title">家計簿</h1>
+  </header>
+
+  <main>
+    <!-- ホーム -->
+    <section id="view-home" class="view" hidden></section>
+
+    <!-- 入力 -->
+    <section id="view-input" class="view" hidden>
+      <div class="seg" role="tablist" id="type-seg">
+        <button type="button" data-type="expense" class="seg-btn">支出</button>
+        <button type="button" data-type="income" class="seg-btn">収入</button>
+      </div>
+
+      <div class="date-row">
+        <button type="button" class="icon-btn" id="date-prev" aria-label="前の日">‹</button>
+        <label class="date-label">
+          <span id="date-text"></span>
+          <input type="date" id="date-input">
+        </label>
+        <button type="button" class="icon-btn" id="date-next" aria-label="次の日">›</button>
+      </div>
+
+      <div class="amount" id="amount-display">¥0</div>
+
+      <div id="method-block">
+        <div class="field-label">支払方法</div>
+        <div class="methods" id="methods"></div>
+        <p class="hint" id="suggest-hint"></p>
+      </div>
+
+      <div class="field-label">カテゴリ</div>
+      <div class="categories" id="categories"></div>
+
+      <input type="text" id="memo" class="memo" placeholder="メモ(任意)" maxlength="60">
+
+      <div class="keypad" id="keypad">
+        <button type="button" data-key="7">7</button>
+        <button type="button" data-key="8">8</button>
+        <button type="button" data-key="9">9</button>
+        <button type="button" data-key="back" aria-label="1文字消す">⌫</button>
+        <button type="button" data-key="4">4</button>
+        <button type="button" data-key="5">5</button>
+        <button type="button" data-key="6">6</button>
+        <button type="button" data-key="clear">C</button>
+        <button type="button" data-key="1">1</button>
+        <button type="button" data-key="2">2</button>
+        <button type="button" data-key="3">3</button>
+        <button type="button" data-key="save" class="save" id="save-btn">保存</button>
+        <button type="button" data-key="0">0</button>
+        <button type="button" data-key="00">00</button>
+        <button type="button" data-key="000">000</button>
+      </div>
+      <div class="edit-actions" id="edit-actions" hidden>
+        <button type="button" class="btn danger" id="delete-btn">この記録を削除</button>
+        <button type="button" class="btn" id="cancel-edit-btn">編集をやめる</button>
+      </div>
+    </section>
+
+    <!-- カレンダー -->
+    <section id="view-calendar" class="view" hidden>
+      <div class="month-nav">
+        <button type="button" class="icon-btn" id="cal-prev" aria-label="前の月">‹</button>
+        <h2 id="cal-title"></h2>
+        <button type="button" class="icon-btn" id="cal-next" aria-label="次の月">›</button>
+      </div>
+      <div class="cal-summary" id="cal-summary"></div>
+      <div class="cal-grid cal-head">
+        <div class="sun">日</div><div>月</div><div>火</div><div>水</div><div>木</div><div>金</div><div class="sat">土</div>
+      </div>
+      <div class="cal-grid" id="cal-grid"></div>
+      <div id="cal-detail" class="card"></div>
+    </section>
+
+    <!-- 設定 -->
+    <section id="view-settings" class="view" hidden></section>
+  </main>
+
+  <nav class="tabbar">
+    <button type="button" data-view="home"><span class="tab-ic">🏠</span>ホーム</button>
+    <button type="button" data-view="input"><span class="tab-ic">✏️</span>入力</button>
+    <button type="button" data-view="calendar"><span class="tab-ic">📅</span>カレンダー</button>
+    <button type="button" data-view="settings"><span class="tab-ic">⚙️</span>設定</button>
+  </nav>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="js/logic.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
