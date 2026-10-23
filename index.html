@@ -94,6 +94,17 @@
     <button type="button" data-view="menu"></button>
   </nav>
 
+  <div class="modal" id="modal" hidden>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="modal-msg">
+      <p id="modal-msg"></p>
+      <input type="text" id="modal-input" inputmode="numeric" autocomplete="off" aria-label="金額" hidden>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="modal-cancel">キャンセル</button>
+        <button type="button" class="btn primary" id="modal-ok">OK</button>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="js/logic.js"></script>

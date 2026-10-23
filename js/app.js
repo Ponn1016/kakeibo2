@@ -53,6 +53,41 @@
     };
   }
 
+  // 今日を基準にした、お試し用のサンプルデータ
+  function demoState() {
+    const s = defaultState();
+    s.incomes[0].amount = 220000;
+    s.settings.savingsGoal = 30000;
+    const t = L.today();
+    const rows = [
+      [-34, 'expense', 12000, 'food', 'cardA', 'まとめ買い'],
+      [-22, 'expense', 4800, 'utility', 'cardB', '電気'],
+      [-21, 'expense', 3200, 'phone', 'cardB', ''],
+      [-15, 'income', 10500, 'extra', 'cash', 'フリマ'],
+      [-14, 'expense', 1065, 'food', 'cash', ''],
+      [-12, 'expense', 1140, 'daily', 'cardB', '洗剤'],
+      [-9, 'expense', 6300, 'social', 'cardB', '飲み会'],
+      [-8, 'expense', 3300, 'transport', 'cash', 'チャージ'],
+      [-6, 'expense', 2400, 'beauty', 'cardA', ''],
+      [-4, 'expense', 740, 'food', 'cash', ''],
+      [-2, 'expense', 6000, 'clothes', 'cardA', 'ユニクロ'],
+      [-2, 'expense', 1000, 'social', 'cash', ''],
+      [-1, 'expense', 750, 'food', 'cash', 'ランチ'],
+      [-1, 'expense', 780, 'food', 'cardB', 'コンビニ']
+    ];
+    s.transactions = rows.map(([d, type, amount, category, method, memo], i) => ({
+      id: 'demo' + i,
+      createdAt: '2000-01-01T00:00:' + L.pad(i),
+      date: L.addDays(t, d),
+      type,
+      amount,
+      category,
+      method,
+      memo
+    }));
+    return s;
+  }
+
   function load() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -76,6 +111,8 @@
   }
 
   let state = load();
+  // お試し版(window.KAKEIBO_DEMO)では、記録が空ならサンプルを入れた状態で開く
+  if (window.KAKEIBO_DEMO && !state.transactions.length) state = demoState();
 
   function save() {
     try {
@@ -136,6 +173,43 @@
   function catIcon(cat, size) {
     return I.category(cat.icon, cat.color, size);
   }
+
+  // アプリ内の確認ダイアログ(withInput のときは金額を入力してもらう)
+  function ask(message, opts) {
+    const o = opts || {};
+    const modal = $('#modal');
+    const input = $('#modal-input');
+    const ok = $('#modal-ok');
+    $('#modal-msg').textContent = message;
+    ok.textContent = o.okLabel || 'OK';
+    ok.classList.toggle('danger-fill', !!o.danger);
+    input.hidden = !o.withInput;
+    input.value = o.value != null ? num(o.value) : '';
+    modal.hidden = false;
+    if (o.withInput) input.focus();
+    else ok.focus();
+    return new Promise((resolve) => {
+      const done = (result) => {
+        modal.hidden = true;
+        ok.onclick = $('#modal-cancel').onclick = modal.onclick = input.onkeydown = null;
+        resolve(result);
+      };
+      const accept = () => done(o.withInput ? Number(input.value.replace(/[^\d]/g, '')) : true);
+      ok.onclick = accept;
+      $('#modal-cancel').onclick = () => done(o.withInput ? null : false);
+      modal.onclick = (e) => {
+        if (e.target === modal) done(o.withInput ? null : false);
+      };
+      input.onkeydown = (e) => {
+        if (e.key === 'Enter') accept();
+      };
+    });
+  }
+
+  $('#modal-input').addEventListener('input', (e) => {
+    const d = e.target.value.replace(/[^\d]/g, '').slice(0, 9);
+    e.target.value = d ? num(d) : '';
+  });
 
   let toastTimer;
   function toast(msg) {
@@ -262,6 +336,7 @@
       .slice(0, 5);
 
     $('#view-home').innerHTML = `
+      ${window.KAKEIBO_DEMO ? `<div class="card demo-note"><b>お試し版です。</b>サンプルの記録が入っています。自由に入力・削除して試せます。メニューの「全データ削除」で空にできます。データはこの端末のブラウザにだけ保存されます。</div>` : ''}
       <div class="card hero">
         <h3>${m}月の可処分(残り)</h3>
         <div class="big ${s.remaining < 0 ? 'minus' : ''}">${en(s.remaining)}</div>
@@ -502,8 +577,8 @@
     renderInput();
   }
 
-  $('#delete-btn').addEventListener('click', () => {
-    if (!form.editingId || !confirm('この記録を削除しますか?')) return;
+  $('#delete-btn').addEventListener('click', async () => {
+    if (!form.editingId || !(await ask('この記録を削除しますか?', { okLabel: '削除する', danger: true }))) return;
     state.transactions = state.transactions.filter((t) => t.id !== form.editingId);
     save();
     toast('削除しました');
@@ -662,15 +737,13 @@
     show('input');
   }
 
-  $('#cal-list').addEventListener('click', (e) => {
+  $('#cal-list').addEventListener('click', async (e) => {
     const add = e.target.closest('[data-add]');
     if (add) return addOn(add.dataset.add);
     const ov = e.target.closest('[data-override]');
     if (ov) {
-      const v = prompt(ov.dataset.name + 'の今月の金額', ov.dataset.amount);
-      if (v === null) return;
-      const n = Number(String(v).replace(/[,円¥\s]/g, ''));
-      if (!Number.isFinite(n) || n < 0) return toast('数値を入力してください');
+      const n = await ask(ov.dataset.name + 'のこの月の金額', { withInput: true, value: ov.dataset.amount, okLabel: '変更する' });
+      if (n === null) return;
       state.incomeOverrides[ov.dataset.override] = n;
       save();
       renderCalendar();
@@ -913,7 +986,7 @@
     toast('保存しました');
   });
 
-  menuEl.addEventListener('click', (e) => {
+  menuEl.addEventListener('click', async (e) => {
     const t = e.target.closest('button');
     if (!t) return;
     const catEl = t.closest('[data-cat-id]');
@@ -936,13 +1009,13 @@
     } else if (t.dataset.delCard) {
       const id = t.dataset.delCard;
       const used = state.transactions.some((x) => x.method === id);
-      if (!confirm(used ? 'このカードの記録は残したまま、選択肢から外します。よろしいですか?' : 'このカードを削除しますか?')) return;
+      if (!(await ask(used ? 'このカードの記録は残したまま、選択肢から外します。' : 'このカードを削除しますか?', { okLabel: '削除する', danger: true }))) return;
       if (used) findCard(id).archived = true;
       else state.cards = state.cards.filter((c) => c.id !== id);
     } else if (t.id === 'add-income') {
       state.incomes.push({ id: uid(), name: '定期収入', amount: 0, day: 25, holidayAdjust: 'prev' });
     } else if (t.dataset.delIncome) {
-      if (!confirm('この定期収入を削除しますか?(過去の月の収入からも消えます)')) return;
+      if (!(await ask('この定期収入を削除しますか?過去の月の収入からも消えます。', { okLabel: '削除する', danger: true }))) return;
       state.incomes = state.incomes.filter((x) => x.id !== t.dataset.delIncome);
     } else if (t.id === 'add-cat') {
       list.push({ id: uid(), name: '新しいカテゴリー', icon: 'box', color: '#a08fd0' });
@@ -950,7 +1023,7 @@
       const id = catEl.dataset.catId;
       if (list.filter((c) => !c.archived).length <= 1) return toast('カテゴリーは1つ以上必要です');
       const used = state.transactions.some((x) => x.category === id);
-      if (!confirm(used ? 'このカテゴリーの記録は残したまま、選択肢から外します。よろしいですか?' : 'このカテゴリーを削除しますか?')) return;
+      if (!(await ask(used ? 'このカテゴリーの記録は残したまま、選択肢から外します。' : 'このカテゴリーを削除しますか?', { okLabel: '削除する', danger: true }))) return;
       if (used) list.find((c) => c.id === id).archived = true;
       else state.categories[catEditType] = list.filter((c) => c.id !== id);
     } else if (catEl && t.dataset.catMove) {
@@ -965,7 +1038,7 @@
     } else if (t.id === 'import-btn') {
       return $('#import-file').click();
     } else if (t.id === 'reset-btn') {
-      if (!confirm('すべての記録と設定を削除します。元に戻せません。よろしいですか?')) return;
+      if (!(await ask('すべての記録と設定を削除します。元に戻せません。', { okLabel: 'すべて削除', danger: true }))) return;
       state = defaultState();
     } else {
       return;
@@ -975,6 +1048,7 @@
   });
 
   function exportData() {
+    if (window.KAKEIBO_DEMO) return toast('お試し版では書き出しできません');
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -988,11 +1062,11 @@
   function importFile(file) {
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
         const data = JSON.parse(reader.result);
         if (!Array.isArray(data.transactions) || !Array.isArray(data.cards)) throw new Error('形式が違います');
-        if (!confirm('今のデータを、読み込んだデータで置き換えます。よろしいですか?')) return;
+        if (!(await ask('今のデータを、読み込んだデータで置き換えます。', { okLabel: '置き換える' }))) return;
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
         state = load();
         toast('読み込みました');
