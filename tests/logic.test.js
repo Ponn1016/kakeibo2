@@ -38,6 +38,21 @@ test('締め日と引落日', () => {
   assert.equal(L.withdrawalDateFor({ ...cardA, paymentMonthOffset: 2 }, '2026-11-20'), '2027-02-10');
 });
 
+// 5日締め・当月26日払い
+const cardB2 = { id: 'b2', name: 'カードB', closingDay: 5, paymentMonthOffset: 0, paymentDay: 26, holidayAdjust: 'next' };
+
+test('当月払いのカード', () => {
+  assert.equal(L.closingDateFor(cardB2, '2026-10-05'), '2026-10-05');
+  assert.equal(L.withdrawalDateFor(cardB2, '2026-10-05'), '2026-10-26'); // 月曜
+  assert.equal(L.closingDateFor(cardB2, '2026-10-06'), '2026-11-05');
+  assert.equal(L.withdrawalDateFor(cardB2, '2026-10-23'), '2026-11-26'); // 木曜
+  assert.equal(L.withdrawalDateFor(cardB2, '2026-12-20'), '2027-01-26');
+  // 2026-12-26 は土曜 → 28日(月)
+  assert.equal(L.withdrawalDateFor(cardB2, '2026-11-30'), '2026-12-28');
+  // 年をまたぐ締め
+  assert.equal(L.withdrawalDateFor(cardB2, '2027-01-03'), '2027-01-26');
+});
+
 const salary = { id: 's', name: '給料', amount: 250000, day: 25, holidayAdjust: 'prev' };
 
 test('定期収入は休日なら前営業日', () => {

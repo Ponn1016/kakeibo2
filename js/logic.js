@@ -151,7 +151,7 @@
   /*
    * card = {
    *   closingDay: 1-31(31=末日),
-   *   paymentMonthOffset: 1(翌月) / 2(翌々月),
+   *   paymentMonthOffset: 0(当月) / 1(翌月) / 2(翌々月),
    *   paymentDay: 1-31(31=末日),
    *   holidayAdjust: 'next' | 'prev' | 'none'
    * }
@@ -167,7 +167,8 @@
 
   function withdrawalDateFor(card, useDate) {
     const close = parse(closingDateFor(card, useDate));
-    const offset = Number(card.paymentMonthOffset) || 1;
+    const raw0 = Number(card.paymentMonthOffset);
+    const offset = Number.isFinite(raw0) && raw0 >= 0 ? raw0 : 1;
     const base = new Date(close.y, close.m - 1 + offset, 1);
     const raw = dayOfMonth(base.getFullYear(), base.getMonth() + 1, Number(card.paymentDay));
     return adjustBusinessDay(raw, card.holidayAdjust || 'next');

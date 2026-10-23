@@ -44,7 +44,7 @@
       settings: { savingsGoal: 0, basis: 'accrual' },
       cards: [
         { id: 'cardA', name: 'カードA', closingDay: 15, paymentMonthOffset: 1, paymentDay: 10, holidayAdjust: 'next', monthlyLimit: 0 },
-        { id: 'cardB', name: 'カードB', closingDay: 31, paymentMonthOffset: 1, paymentDay: 27, holidayAdjust: 'next', monthlyLimit: 0 }
+        { id: 'cardB', name: 'カードB', closingDay: 5, paymentMonthOffset: 0, paymentDay: 26, holidayAdjust: 'next', monthlyLimit: 0 }
       ],
       incomes: [{ id: 'salary', name: '給料', amount: 0, day: 25, holidayAdjust: 'prev' }],
       incomeOverrides: {},
@@ -792,6 +792,7 @@
               <label class="full">名前<input type="text" data-f="name" value="${esc(c.name)}" maxlength="20"></label>
               <label>締め日<select data-f="closingDay">${dayOptions(c.closingDay)}</select></label>
               <label>支払月<select data-f="paymentMonthOffset">
+                <option value="0" ${Number(c.paymentMonthOffset) === 0 ? 'selected' : ''}>当月(締めと同じ月)</option>
                 <option value="1" ${Number(c.paymentMonthOffset) === 1 ? 'selected' : ''}>翌月</option>
                 <option value="2" ${Number(c.paymentMonthOffset) === 2 ? 'selected' : ''}>翌々月</option></select></label>
               <label>支払日<select data-f="paymentDay">${dayOptions(c.paymentDay)}</select></label>
