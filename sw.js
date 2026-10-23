@@ -1,11 +1,12 @@
 // アプリ本体をキャッシュしてオフラインでも動くようにする。
 // ファイルを更新したら CACHE のバージョンを上げること。
-const CACHE = 'kakeibo2-v1';
+const CACHE = 'kakeibo2-v2';
 const ASSETS = [
   './',
   './index.html',
   './css/style.css',
   './js/logic.js',
+  './js/icons.js',
   './js/app.js',
   './manifest.webmanifest',
   './icons/icon-192.png',

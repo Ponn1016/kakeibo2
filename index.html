@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#2f7d6d">
+  <meta name="theme-color" content="#ade3cf">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="家計簿">
@@ -14,8 +14,14 @@
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <header class="topbar">
-    <h1 id="title">家計簿</h1>
+  <header class="appbar">
+    <div class="appbar-inner">
+      <div class="appbar-side"></div>
+      <div class="appbar-center" id="appbar-center"></div>
+      <div class="appbar-side right">
+        <button type="button" class="round-btn" id="appbar-action" hidden></button>
+      </div>
+    </div>
   </header>
 
   <main>
@@ -24,85 +30,74 @@
 
     <!-- 入力 -->
     <section id="view-input" class="view" hidden>
-      <div class="seg" role="tablist" id="type-seg">
-        <button type="button" data-type="expense" class="seg-btn">支出</button>
-        <button type="button" data-type="income" class="seg-btn">収入</button>
-      </div>
-
-      <div class="date-row">
-        <button type="button" class="icon-btn" id="date-prev" aria-label="前の日">‹</button>
-        <label class="date-label">
+      <div class="form-row">
+        <div class="row-label">日付</div>
+        <button type="button" class="chev" id="date-prev" aria-label="前の日"></button>
+        <label class="pill date-pill">
           <span id="date-text"></span>
-          <input type="date" id="date-input">
+          <input type="date" id="date-input" aria-label="日付を選ぶ">
         </label>
-        <button type="button" class="icon-btn" id="date-next" aria-label="次の日">›</button>
+        <button type="button" class="chev" id="date-next" aria-label="次の日"></button>
       </div>
-
-      <div class="amount" id="amount-display">¥0</div>
-
-      <div id="method-block">
-        <div class="field-label">支払方法</div>
+      <div class="form-row">
+        <label class="row-label" for="memo">メモ</label>
+        <input type="text" id="memo" class="plain-input" placeholder="未入力" maxlength="60" autocomplete="off">
+      </div>
+      <div class="form-row">
+        <label class="row-label" for="amount" id="amount-label">支出</label>
+        <input type="text" id="amount" class="pill amount-input" inputmode="numeric" placeholder="0" autocomplete="off">
+        <span class="unit">円</span>
+      </div>
+      <div class="form-row method-row" id="method-row">
+        <div class="row-label">支払</div>
         <div class="methods" id="methods"></div>
-        <p class="hint" id="suggest-hint"></p>
       </div>
-
-      <div class="field-label">カテゴリ</div>
+      <p class="hint" id="suggest-hint"></p>
+      <div class="section-label">カテゴリー</div>
       <div class="categories" id="categories"></div>
-
-      <input type="text" id="memo" class="memo" placeholder="メモ(任意)" maxlength="60">
-
-      <div class="keypad" id="keypad">
-        <button type="button" data-key="7">7</button>
-        <button type="button" data-key="8">8</button>
-        <button type="button" data-key="9">9</button>
-        <button type="button" data-key="back" aria-label="1文字消す">⌫</button>
-        <button type="button" data-key="4">4</button>
-        <button type="button" data-key="5">5</button>
-        <button type="button" data-key="6">6</button>
-        <button type="button" data-key="clear">C</button>
-        <button type="button" data-key="1">1</button>
-        <button type="button" data-key="2">2</button>
-        <button type="button" data-key="3">3</button>
-        <button type="button" data-key="save" class="save" id="save-btn">保存</button>
-        <button type="button" data-key="0">0</button>
-        <button type="button" data-key="00">00</button>
-        <button type="button" data-key="000">000</button>
-      </div>
-      <div class="edit-actions" id="edit-actions" hidden>
-        <button type="button" class="btn danger" id="delete-btn">この記録を削除</button>
-        <button type="button" class="btn" id="cancel-edit-btn">編集をやめる</button>
-      </div>
     </section>
 
     <!-- カレンダー -->
     <section id="view-calendar" class="view" hidden>
-      <div class="month-nav">
-        <button type="button" class="icon-btn" id="cal-prev" aria-label="前の月">‹</button>
-        <h2 id="cal-title"></h2>
-        <button type="button" class="icon-btn" id="cal-next" aria-label="次の月">›</button>
+      <div class="search-box" id="search-box" hidden>
+        <input type="search" id="search-input" placeholder="メモ・カテゴリーで検索" autocomplete="off">
       </div>
-      <div class="cal-summary" id="cal-summary"></div>
-      <div class="cal-grid cal-head">
-        <div class="sun">日</div><div>月</div><div>火</div><div>水</div><div>木</div><div>金</div><div class="sat">土</div>
+      <div id="cal-body">
+        <div class="month-row">
+          <button type="button" class="chev" id="cal-prev" aria-label="前の月"></button>
+          <div class="pill month-pill" id="cal-title"></div>
+          <button type="button" class="chev" id="cal-next" aria-label="次の月"></button>
+        </div>
+        <div class="cal bleed" id="cal"></div>
+        <div class="totals" id="cal-totals"></div>
       </div>
-      <div class="cal-grid" id="cal-grid"></div>
-      <div id="cal-detail" class="card"></div>
+      <div class="day-list bleed" id="cal-list"></div>
     </section>
 
-    <!-- 設定 -->
-    <section id="view-settings" class="view" hidden></section>
+    <!-- レポート -->
+    <section id="view-report" class="view" hidden></section>
+
+    <!-- メニュー(設定) -->
+    <section id="view-menu" class="view" hidden></section>
   </main>
 
-  <nav class="tabbar">
-    <button type="button" data-view="home"><span class="tab-ic">🏠</span>ホーム</button>
-    <button type="button" data-view="input"><span class="tab-ic">✏️</span>入力</button>
-    <button type="button" data-view="calendar"><span class="tab-ic">📅</span>カレンダー</button>
-    <button type="button" data-view="settings"><span class="tab-ic">⚙️</span>設定</button>
+  <div class="submit-bar" id="submit-bar" hidden>
+    <button type="button" class="trash-btn" id="delete-btn" aria-label="この記録を削除" hidden></button>
+    <button type="button" class="submit-btn" id="save-btn">支出を入力する</button>
+  </div>
+
+  <nav class="tabbar" id="tabbar">
+    <button type="button" data-view="home"></button>
+    <button type="button" data-view="input"></button>
+    <button type="button" data-view="calendar"></button>
+    <button type="button" data-view="report"></button>
+    <button type="button" data-view="menu"></button>
   </nav>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="js/logic.js"></script>
+  <script src="js/icons.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
