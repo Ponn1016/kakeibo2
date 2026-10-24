@@ -41,9 +41,11 @@
         incomeMode: 'hourly' // 収入の入力方法:'hourly'(時給×時間)/ 'amount'(金額)
       },
       cards: [
-        { id: 'cardA', name: 'カードA', closingDay: 15, paymentMonthOffset: 1, paymentDay: 10, holidayAdjust: 'next', monthlyLimit: 0 },
-        { id: 'cardB', name: 'カードB', closingDay: 5, paymentMonthOffset: 0, paymentDay: 26, holidayAdjust: 'next', monthlyLimit: 0 }
+        { id: 'cardA', name: 'JALカード', closingDay: 15, paymentMonthOffset: 1, paymentDay: 10, holidayAdjust: 'next', monthlyLimit: 0 },
+        { id: 'cardB', name: '三井住友NL', closingDay: 5, paymentMonthOffset: 0, paymentDay: 26, holidayAdjust: 'next', monthlyLimit: 0 }
       ],
+      // コード決済・電子マネー。口座からチャージして使うので、使った日に支払ったものとして扱う
+      wallets: [{ id: 'paypay', name: 'PayPay' }],
       // 毎月決まった額の収入。金額 0 のあいだは使わない
       incomes: [{ id: 'fixed-income', name: '固定収入', amount: 0, day: 25, holidayAdjust: 'prev' }],
       incomeOverrides: {},
@@ -76,7 +78,9 @@
       [-4, 'expense', 740, 'food', 'cash', ''],
       [-2, 'expense', 1000, 'social', 'cash', ''],
       [-1, 'expense', 750, 'food', 'cash', 'ランチ'],
-      [-1, 'expense', 780, 'food', 'cardB', 'コンビニ']
+      [-1, 'expense', 780, 'food', 'cardB', 'コンビニ'],
+      [-3, 'expense', 1480, 'daily', 'paypay', 'ドラッグストア'],
+      [-5, 'expense', 650, 'food', 'paypay', 'カフェ']
     ];
     s.transactions = rows.map(([d, type, amount, category, method, memo, hours], i) => ({
       id: 'demo' + i,
@@ -99,6 +103,11 @@
       const data = JSON.parse(raw);
       const base = defaultState();
       const cats = data.categories || {};
+      // 初期名のままのカードは実際のカード名にする
+      const rename = { cardA: ['カードA', 'JALカード'], cardB: ['カードB', '三井住友NL'] };
+      (data.cards || []).forEach((c) => {
+        if (rename[c.id] && c.name === rename[c.id][0]) c.name = rename[c.id][1];
+      });
       return {
         ...base,
         ...data,
@@ -161,9 +170,17 @@
     return state.cards.find((c) => c.id === id) || null;
   }
 
+  function activeWallets() {
+    return (state.wallets || []).filter((w) => !w.archived);
+  }
+
+  function findWallet(id) {
+    return (state.wallets || []).find((w) => w.id === id) || null;
+  }
+
   function methodName(id) {
     if (id === 'cash') return '現金';
-    const c = findCard(id);
+    const c = findCard(id) || findWallet(id);
     return c ? c.name : '不明';
   }
 
@@ -545,9 +562,12 @@
   function renderMethods() {
     const sug = L.suggestPayment(state, form.date, Number(form.amount) || 0);
     if (!methodTouched) form.method = sug.best.method;
-    const methods = [{ id: 'cash', name: '現金', wd: 'その場で' }].concat(
-      activeCards().map((c) => ({ id: c.id, name: c.name, wd: mdw(L.withdrawalDateFor(c, form.date)) + '引落' }))
-    );
+    const wallets = activeWallets();
+    const curWallet = findWallet(form.method);
+    if (curWallet && !wallets.includes(curWallet)) wallets.push(curWallet);
+    const methods = [{ id: 'cash', name: '現金', wd: 'その場で' }]
+      .concat(wallets.map((w) => ({ id: w.id, name: w.name, wd: 'チャージ残高' })))
+      .concat(activeCards().map((c) => ({ id: c.id, name: c.name, wd: mdw(L.withdrawalDateFor(c, form.date)) + '引落' })));
     // 編集中の記録が削除済みカードの場合も表示する
     const cur = findCard(form.method);
     if (cur && !methods.some((m) => m.id === cur.id)) methods.push({ id: cur.id, name: cur.name, wd: mdw(L.withdrawalDateFor(cur, form.date)) + '引落' });
@@ -762,7 +782,7 @@
     if (withDate) sub.push(longDate(tx.date));
     const card = tx.type === 'expense' ? findCard(tx.method) : null;
     if (card) sub.push(card.name + '・' + mdw(L.withdrawalDateFor(card, tx.date)) + '引落');
-    else if (tx.type === 'expense') sub.push('現金');
+    else if (tx.type === 'expense') sub.push(methodName(tx.method));
     if (tx.hours && tx.hours.length) sub.push(hoursText(tx.hours));
     return `<li class="tap" data-edit="${esc(tx.id)}">
       <div class="ic-wrap">${catIcon(cat, 34)}</div>
@@ -849,10 +869,11 @@
 
     const byMethod = {};
     exp.forEach((t) => {
-      const key = findCard(t.method) ? t.method : 'cash';
+      const key = findCard(t.method) || findWallet(t.method) ? t.method : 'cash';
       byMethod[key] = (byMethod[key] || 0) + Number(t.amount);
     });
     const methodRows = ['cash']
+      .concat((state.wallets || []).map((w) => w.id))
       .concat(state.cards.map((c) => c.id))
       .filter((id) => byMethod[id])
       .map((id) => `<li><div class="grow">${esc(methodName(id))}</div><div>${en(byMethod[id])}</div></li>`)
@@ -946,6 +967,20 @@
           .join('')}
         <div class="btn-row" style="margin-top:10px"><button type="button" class="btn" id="add-rate">+ 時給を追加</button></div>
         <p class="small muted">「入力 → 収入 → 時給×時間」で、ここの時給ごとに時間を入れると合計が収入になります。</p>
+      </div>
+
+      <div class="card">
+        <h3>コード決済・電子マネー</h3>
+        ${activeWallets()
+          .map(
+            (w) => `<div class="rate-edit">
+            <input type="text" id="wallet-${esc(w.id)}" data-wallet="${esc(w.id)}" value="${esc(w.name)}" maxlength="12" aria-label="名前">
+            <button type="button" class="mini-btn danger" data-del-wallet="${esc(w.id)}" aria-label="削除">${I.ui('trash', 18, 1.6)}</button>
+          </div>`
+          )
+          .join('')}
+        <div class="btn-row" style="margin-top:10px"><button type="button" class="btn" id="add-wallet">+ 追加</button></div>
+        <p class="small muted">口座からのチャージは記録しません(自分のお金の移動なので)。お店で払ったときに、支払方法をこれにして支出を記録してください。</p>
       </div>
 
       <div class="card">
@@ -1065,6 +1100,8 @@
       const c = state.categories[catEditType].find((x) => x.id === catEl.dataset.catId);
       c[t.dataset.cf] = t.dataset.cf === 'name' ? t.value.trim() || 'カテゴリー' : t.value;
       rerender = t.dataset.cf !== 'name';
+    } else if (t.dataset.wallet) {
+      findWallet(t.dataset.wallet).name = t.value.trim() || 'コード決済';
     } else if (t.dataset.rateIdx !== undefined) {
       state.settings.hourlyRates[Number(t.dataset.rateIdx)] = Math.max(0, Math.round(Number(t.value) || 0));
     } else if (t.id === 'set-savings') {
@@ -1107,6 +1144,14 @@
       if (!(await ask(used ? 'このカードの記録は残したまま、選択肢から外します。' : 'このカードを削除しますか?', { okLabel: '削除する', danger: true }))) return;
       if (used) findCard(id).archived = true;
       else state.cards = state.cards.filter((c) => c.id !== id);
+    } else if (t.id === 'add-wallet') {
+      state.wallets = (state.wallets || []).concat([{ id: uid(), name: 'コード決済' }]);
+    } else if (t.dataset.delWallet) {
+      const id = t.dataset.delWallet;
+      const used = state.transactions.some((x) => x.method === id);
+      if (!(await ask(used ? 'この支払方法の記録は残したまま、選択肢から外します。' : 'この支払方法を削除しますか?', { okLabel: '削除する', danger: true }))) return;
+      if (used) findWallet(id).archived = true;
+      else state.wallets = state.wallets.filter((w) => w.id !== id);
     } else if (t.id === 'add-rate') {
       state.settings.hourlyRates = (state.settings.hourlyRates || []).concat([0]);
     } else if (t.dataset.delRate !== undefined) {
