@@ -4,7 +4,7 @@
 
   const L = window.KakeiboLogic;
   const I = window.KakeiboIcons;
-  const STORAGE_KEY = 'kakeibo2:v1';
+  const STORAGE_KEY = 'kakeibo2:v2';
   const WEEK = ['日', '月', '火', '水', '木', '金', '土'];
 
   // ---------- データ ----------
@@ -18,21 +18,14 @@
       expense: [
         { id: 'food', name: '食費', icon: 'food', color: '#f29a38' },
         { id: 'daily', name: '日用品', icon: 'bottle', color: '#4cb86b' },
-        { id: 'clothes', name: '衣服', icon: 'shirt', color: '#3555b8' },
         { id: 'beauty', name: '美容', icon: 'lipstick', color: '#e86aa6' },
         { id: 'social', name: '交際費', icon: 'cheers', color: '#e2bd2a' },
-        { id: 'medical', name: '医療費', icon: 'pill', color: '#55bf93' },
-        { id: 'education', name: '教育費', icon: 'notebook', color: '#e65a5a' },
-        { id: 'utility', name: '光熱費', icon: 'faucet', color: '#49b5e6' },
-        { id: 'transport', name: '交通費', icon: 'train', color: '#9a6a4a' },
-        { id: 'phone', name: '通信費', icon: 'phone', color: '#6b6f73' },
-        { id: 'house', name: '住居費', icon: 'house', color: '#f0a53a' },
+        { id: 'fixed', name: '固定費', icon: 'house', color: '#49b5e6' },
         { id: 'other', name: 'その他', icon: 'box', color: '#a08fd0' }
       ],
       income: [
+        { id: 'salary', name: '給与', icon: 'wallet', color: '#e2a72a' },
         { id: 'extra', name: '臨時収入', icon: 'sparkle', color: '#49b5e6' },
-        { id: 'bonus', name: '賞与', icon: 'gift', color: '#e86aa6' },
-        { id: 'salary', name: '給料', icon: 'wallet', color: '#e2a72a' },
         { id: 'inc-other', name: 'その他', icon: 'coins', color: '#a08fd0' }
       ]
     };
@@ -40,13 +33,19 @@
 
   function defaultState() {
     return {
-      version: 1,
-      settings: { savingsGoal: 0, basis: 'accrual' },
+      version: 2,
+      settings: {
+        savingsGoal: 0,
+        basis: 'accrual',
+        hourlyRates: [1830, 1530, 1380, 1280],
+        incomeMode: 'hourly' // 収入の入力方法:'hourly'(時給×時間)/ 'amount'(金額)
+      },
       cards: [
         { id: 'cardA', name: 'カードA', closingDay: 15, paymentMonthOffset: 1, paymentDay: 10, holidayAdjust: 'next', monthlyLimit: 0 },
         { id: 'cardB', name: 'カードB', closingDay: 5, paymentMonthOffset: 0, paymentDay: 26, holidayAdjust: 'next', monthlyLimit: 0 }
       ],
-      incomes: [{ id: 'salary', name: '給料', amount: 0, day: 25, holidayAdjust: 'prev' }],
+      // 毎月決まった額の収入。金額 0 のあいだは使わない
+      incomes: [{ id: 'fixed-income', name: '固定収入', amount: 0, day: 25, holidayAdjust: 'prev' }],
       incomeOverrides: {},
       categories: defaultCategories(),
       transactions: []
@@ -56,34 +55,39 @@
   // 今日を基準にした、お試し用のサンプルデータ
   function demoState() {
     const s = defaultState();
-    s.incomes[0].amount = 220000;
-    s.settings.savingsGoal = 30000;
+    s.settings.savingsGoal = 20000;
     const t = L.today();
+    const monthStart = t.slice(0, 8) + '01';
+    const shift = [
+      { rate: 1830, hours: 48 },
+      { rate: 1530, hours: 20 },
+      { rate: 1280, hours: 16 }
+    ];
     const rows = [
-      [-34, 'expense', 12000, 'food', 'cardA', 'まとめ買い'],
-      [-22, 'expense', 4800, 'utility', 'cardB', '電気'],
-      [-21, 'expense', 3200, 'phone', 'cardB', ''],
-      [-15, 'income', 10500, 'extra', 'cash', 'フリマ'],
+      [monthStart, 'income', L.hourlyTotal(shift), 'salary', 'cash', '先月分', shift],
+      [-15, 'income', 8000, 'extra', 'cash', 'フリマ'],
+      [-20, 'expense', 4800, 'fixed', 'cardB', '電気'],
+      [-19, 'expense', 3200, 'fixed', 'cardB', 'スマホ'],
       [-14, 'expense', 1065, 'food', 'cash', ''],
       [-12, 'expense', 1140, 'daily', 'cardB', '洗剤'],
       [-9, 'expense', 6300, 'social', 'cardB', '飲み会'],
-      [-8, 'expense', 3300, 'transport', 'cash', 'チャージ'],
+      [-8, 'expense', 3300, 'other', 'cash', '交通費'],
       [-6, 'expense', 2400, 'beauty', 'cardA', ''],
       [-4, 'expense', 740, 'food', 'cash', ''],
-      [-2, 'expense', 6000, 'clothes', 'cardA', 'ユニクロ'],
       [-2, 'expense', 1000, 'social', 'cash', ''],
       [-1, 'expense', 750, 'food', 'cash', 'ランチ'],
       [-1, 'expense', 780, 'food', 'cardB', 'コンビニ']
     ];
-    s.transactions = rows.map(([d, type, amount, category, method, memo], i) => ({
+    s.transactions = rows.map(([d, type, amount, category, method, memo, hours], i) => ({
       id: 'demo' + i,
       createdAt: '2000-01-01T00:00:' + L.pad(i),
-      date: L.addDays(t, d),
+      date: typeof d === 'string' ? d : L.addDays(t, d),
       type,
       amount,
       category,
       method,
-      memo
+      memo,
+      ...(hours ? { hours } : {})
     }));
     return s;
   }
@@ -300,6 +304,7 @@
     if (!b || b.dataset.type === form.type) return;
     form.type = b.dataset.type;
     form.category = null;
+    form.hours = {};
     renderAppbar();
     renderInput();
   });
@@ -321,82 +326,62 @@
   });
 
   // ---------- ホーム ----------
+  // 「今月あといくら使えるか」だけを大きく見せる
 
   function renderHome() {
     const t = L.today();
     const mk = L.monthKey(t);
     const s = L.monthSummary(state, mk, t);
     const m = Number(mk.slice(5));
-    const usedRatio = s.budget > 0 ? Math.min(1, Math.max(0, s.spent / s.budget)) : 0;
-    const sug = L.suggestPayment(state, t, 0);
-    const nextInc = L.nextIncomeDate(state.incomes, L.addDays(t, 1));
-    const recent = state.transactions
-      .slice()
-      .sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt))
-      .slice(0, 5);
+    const el = $('#view-home');
+    const demo = window.KAKEIBO_DEMO
+      ? '<p class="demo-note">お試し版です。サンプルの記録が入っています。メニューの「全データ削除」で空にできます。</p>'
+      : '';
 
-    $('#view-home').innerHTML = `
-      ${window.KAKEIBO_DEMO ? `<div class="card demo-note"><b>お試し版です。</b>サンプルの記録が入っています。自由に入力・削除して試せます。メニューの「全データ削除」で空にできます。データはこの端末のブラウザにだけ保存されます。</div>` : ''}
-      <div class="card hero">
-        <h3>${m}月の可処分(残り)</h3>
-        <div class="big ${s.remaining < 0 ? 'minus' : ''}">${en(s.remaining)}</div>
-        <div class="bar" aria-hidden="true"><span style="width:${(usedRatio * 100).toFixed(1)}%"></span></div>
-        <div class="hero-row">
-          <div><div class="label">1日あたりの目安</div><div class="val">${en(s.perDay)}</div><div class="label">残り${s.daysLeft}日</div></div>
-          <div><div class="label">今日あと使える</div><div class="val">${en(s.todayAllowance)}</div><div class="label">今日の目安から</div></div>
+    if (s.income <= 0) {
+      el.innerHTML = `
+        <section class="focus">
+          <div class="focus-label">${m}月 あと使えるお金</div>
+          <p class="focus-empty">今月の収入を記録すると、<br>あといくら使えるかがここに出ます。</p>
+          <button type="button" class="btn primary" data-add-income>給与を記録する</button>
+          ${s.spent ? `<p class="small muted">今月使ったお金:${en(s.spent)}</p>` : ''}
+        </section>${demo}`;
+      return;
+    }
+
+    const budget = Math.max(s.budget, 0);
+    const usedPct = budget ? Math.min(100, (s.spent / budget) * 100) : 100;
+    const expectedPct = budget ? Math.min(100, (s.expectedSpent / budget) * 100) : 0;
+    let pace;
+    if (s.remaining < 0) pace = { cls: 'bad', label: '予算オーバー', note: en(-s.remaining) + ' 使いすぎています' };
+    else if (s.paceDiff >= 0) pace = { cls: 'good', label: 'ペース順調', note: '予定より ' + en(s.paceDiff) + ' 少なめ' };
+    else pace = { cls: 'warn', label: '使いすぎ注意', note: '予定より ' + en(-s.paceDiff) + ' 多め' };
+
+    el.innerHTML = `
+      <section class="focus">
+        <div class="focus-label">${m}月 あと使えるお金</div>
+        <div class="focus-big ${s.remaining < 0 ? 'minus' : ''}">${s.remaining < 0 ? '-' : ''}${num(Math.abs(s.remaining))}<span>円</span></div>
+        <div class="pace ${pace.cls}"><b>${pace.label}</b>${pace.note}</div>
+        <div class="meter" role="img" aria-label="予算${en(budget)}のうち${en(s.spent)}使用">
+          <span class="used ${pace.cls}" style="width:${usedPct.toFixed(1)}%"></span>
+          <span class="expected" style="left:${expectedPct.toFixed(1)}%" title="今日までの目安"></span>
         </div>
+        <div class="meter-labels"><span>使った ${en(s.spent)}</span><span>予算 ${en(budget)}</span></div>
+      </section>
+      <div class="tiles">
+        <div class="tile"><div class="label">1日あたり</div><div class="val">${en(s.perDay)}</div><div class="note">月末まで残り${s.daysLeft}日</div></div>
+        <div class="tile"><div class="label">今日あと</div><div class="val ${s.todayAllowance < 0 ? 'expense' : ''}">${en(s.todayAllowance)}</div><div class="note">今日使った ${en(s.spentToday)}</div></div>
       </div>
-      ${s.recurringTotal === 0 ? `<div class="card"><p class="small" style="margin:0 0 8px">給料などの定期収入がまだ登録されていません。</p><button type="button" class="btn small primary" data-go="menu">メニューで登録する</button></div>` : ''}
-
-      <div class="card">
-        <h3>今月の内訳(${s.basis === 'cash' ? 'カードは引落月で計上' : 'カードは使った月で計上'})</h3>
-        <div class="rows">
-          <div>収入</div><div class="income">${en(s.income)}</div>
-          ${s.recurring.map((r) => `<div class="sub">${esc(r.name)} ${mdw(r.date)}</div><div class="sub">${en(r.amount)}</div>`).join('')}
-          ${s.extraIncome ? `<div class="sub">都度収入</div><div class="sub">${en(s.extraIncome)}</div>` : ''}
-          ${s.savings ? `<div>貯金目標</div><div>-${en(s.savings)}</div>` : ''}
-          <div>支出</div><div class="expense">-${en(s.spent)}</div>
-          <div class="sub">現金</div><div class="sub">${en(s.cashSpent)}</div>
-          ${s.basis === 'cash'
-            ? `<div class="sub">カード引落</div><div class="sub">${en(s.cardWithdrawn)}</div>`
-            : `<div class="sub">カード利用</div><div class="sub">${en(s.cardUsed)}</div>`}
-          <div class="total">可処分(残り)</div><div class="total">${en(s.remaining)}</div>
-        </div>
-      </div>
-
-      <div class="card">
-        <h3>今日の支払いなら</h3>
-        ${renderSuggestion(sug)}
-      </div>
-
-      <div class="card">
-        <h3>今月の引落・入金予定</h3>
-        <ul class="list">${scheduleItems(s, t) || '<li class="muted small">予定はありません</li>'}</ul>
-        ${nextInc ? `<p class="small muted" style="margin:6px 0 0">次の${esc(nextInc.name)}:${mdw(nextInc.date)}(${L.diffDays(t, nextInc.date)}日後)</p>` : ''}
-      </div>
-
-      <div class="card">
-        <h3>最近の記録</h3>
-        <ul class="list">${recent.map(homeTxItem).join('') || '<li class="muted small">まだ記録がありません</li>'}</ul>
-      </div>`;
+      <button type="button" class="link-row" data-go="report">内訳・引落予定を見る${I.ui('chevR', 18, 1.8)}</button>
+      ${demo}`;
   }
 
-  function renderSuggestion(sug) {
-    const best = sug.best;
-    return `
-      <div class="suggest-best">${esc(best.name)}</div>
-      <p class="small" style="margin:2px 0 6px">${esc(sug.reason)}</p>
-      ${best.notes.map((n) => `<span class="tag good">${esc(n)}</span>`).join('')}
-      <ul class="list" style="margin-top:6px">
-        ${sug.ranked
-          .slice(1)
-          .map(
-            (o) => `<li><div class="grow"><div>${esc(o.name)}</div>${o.notes.map((n) => `<span class="tag warn">${esc(n)}</span>`).join('')}</div>
-              <div class="small muted">${o.method === 'cash' ? 'その場で支払い' : mdw(o.withdrawalDate) + ' 引落'}</div></li>`
-          )
-          .join('')}
-      </ul>`;
-  }
+  $('#view-home').addEventListener('click', (e) => {
+    if (!e.target.closest('[data-add-income]')) return;
+    resetForm();
+    form.type = 'income';
+    show('input');
+  });
 
   function scheduleItems(s, t) {
     const items = [];
@@ -411,20 +396,14 @@
       .join('');
   }
 
-  function homeTxItem(tx) {
-    const cat = findCategory(tx.category);
-    const sub = [mdw(tx.date)];
-    if (tx.type === 'expense') sub.push(methodName(tx.method));
-    return `<li class="tap" data-edit="${esc(tx.id)}">
-      ${catIcon(cat, 28)}
-      <div class="grow"><div class="title">${esc(cat.name)}${tx.memo ? ` <span class="small muted">(${esc(tx.memo)})</span>` : ''}</div>
-      <div class="small muted">${esc(sub.join(' · '))}</div></div>
-      <div class="${tx.type === 'income' ? 'income' : ''}">${en(tx.amount)}</div></li>`;
+  function hoursText(hours) {
+    return (hours || []).map((h) => num(h.rate) + '円×' + Math.round(h.hours * 100) / 100 + 'h').join(' + ');
   }
 
   // ---------- 入力 ----------
 
-  const form = { editingId: null, type: 'expense', date: L.today(), amount: '', category: null, method: 'cash', memo: '' };
+  // hours: 時給ごとの入力中の時間 { "1830": "7.5", ... }
+  const form = { editingId: null, type: 'expense', date: L.today(), amount: '', category: null, method: 'cash', memo: '', hours: {}, incomeMode: 'hourly' };
   let methodTouched = false;
   let returnView = 'home'; // 編集を終えたときに戻る画面
 
@@ -435,6 +414,8 @@
     form.amount = '';
     form.category = null;
     form.memo = '';
+    form.hours = {};
+    form.incomeMode = state.settings.incomeMode || 'hourly';
     methodTouched = false;
   }
 
@@ -449,7 +430,9 @@
       amount: String(tx.amount),
       category: tx.category,
       method: tx.method || 'cash',
-      memo: tx.memo || ''
+      memo: tx.memo || '',
+      hours: Object.fromEntries((tx.hours || []).map((h) => [String(h.rate), String(Math.round(h.hours * 100) / 100)])),
+      incomeMode: tx.hours && tx.hours.length ? 'hourly' : 'amount'
     });
     methodTouched = true;
     show('input');
@@ -473,8 +456,84 @@
     $('#method-row').hidden = !isExpense;
     $('#suggest-hint').hidden = !isExpense;
     if (isExpense) renderMethods();
+
+    const hourly = isHourly();
+    $('#income-mode-row').hidden = isExpense;
+    document.querySelectorAll('#income-mode button').forEach((b) => b.classList.toggle('active', b.dataset.mode === form.incomeMode));
+    $('#hourly-block').hidden = !hourly;
+    $('#amount').readOnly = hourly;
+    $('#amount').classList.toggle('computed', hourly);
+    if (hourly) renderHourly();
     renderSubmit();
   }
+
+  function isHourly() {
+    return form.type === 'income' && form.incomeMode === 'hourly';
+  }
+
+  // 設定の時給 + 編集中の記録にだけある時給
+  function hourlyRates() {
+    const rates = (state.settings.hourlyRates || []).map(Number).filter((r) => r > 0);
+    Object.keys(form.hours).forEach((r) => {
+      if (!rates.includes(Number(r))) rates.push(Number(r));
+    });
+    return rates;
+  }
+
+  function hourlyRows() {
+    return hourlyRates()
+      .map((rate) => ({ rate, hours: L.parseHours(form.hours[rate]) }))
+      .filter((r) => r.hours > 0);
+  }
+
+  function renderHourly() {
+    const rates = hourlyRates();
+    $('#hourly-block').innerHTML = rates.length
+      ? rates
+          .map(
+            (rate) => `<div class="hourly-row">
+              <span class="rate">${num(rate)}円</span><span class="x">×</span>
+              <input type="text" class="pill hours-input" id="hours-${rate}" data-rate="${rate}" inputmode="decimal" placeholder="0" value="${esc(form.hours[rate] || '')}" autocomplete="off" aria-label="${num(rate)}円の時間">
+              <span class="h">時間</span><span class="subtotal" data-subtotal="${rate}"></span></div>`
+          )
+          .join('') + '<p class="hint">7.5 や 7:30 のように入力できます。合計が収入の金額になります。</p>'
+      : '<p class="hint">メニューで時給を登録してください。</p>';
+    updateHourly();
+  }
+
+  function updateHourly() {
+    hourlyRates().forEach((rate) => {
+      const el = document.querySelector(`[data-subtotal="${rate}"]`);
+      const h = L.parseHours(form.hours[rate]);
+      if (el) el.textContent = h ? en(L.hourlyTotal([{ rate, hours: h }])) : '';
+    });
+    const total = L.hourlyTotal(hourlyRows());
+    form.amount = total ? String(total) : '';
+    $('#amount').value = total ? num(total) : '';
+    renderSubmit();
+  }
+
+  $('#hourly-block').addEventListener('input', (e) => {
+    const rate = e.target.dataset.rate;
+    if (!rate) return;
+    form.hours[rate] = e.target.value;
+    updateHourly();
+  });
+
+  $('#income-mode').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-mode]');
+    if (!b || b.dataset.mode === form.incomeMode) return;
+    form.incomeMode = b.dataset.mode;
+    state.settings.incomeMode = form.incomeMode;
+    save();
+    if (form.incomeMode === 'hourly') {
+      // 時給で入力するときは給与を選ぶ
+      if (state.categories.income.some((c) => c.id === 'salary' && !c.archived)) form.category = 'salary';
+    } else {
+      form.hours = {};
+    }
+    renderInput();
+  });
 
   function renderSubmit() {
     const btn = $('#save-btn');
@@ -514,6 +573,7 @@
   $('#memo').addEventListener('input', (e) => (form.memo = e.target.value));
 
   $('#amount').addEventListener('input', (e) => {
+    if (isHourly()) return;
     const digits = e.target.value.replace(/[^\d]/g, '').replace(/^0+/, '').slice(0, 9);
     form.amount = digits;
     e.target.value = digits ? num(digits) : '';
@@ -545,8 +605,8 @@
   function saveForm() {
     const amount = Number(form.amount);
     if (!amount || amount <= 0) {
-      toast('金額を入力してください');
-      $('#amount').focus();
+      toast(isHourly() ? '時間を入力してください' : '金額を入力してください');
+      if (!isHourly()) $('#amount').focus();
       return;
     }
     const data = {
@@ -557,8 +617,11 @@
       method: form.type === 'expense' ? form.method : 'cash',
       memo: form.memo.trim()
     };
+    if (isHourly()) data.hours = hourlyRows();
     if (form.editingId) {
-      Object.assign(state.transactions.find((t) => t.id === form.editingId), data);
+      const tx = state.transactions.find((t) => t.id === form.editingId);
+      delete tx.hours;
+      Object.assign(tx, data);
       save();
       toast('変更しました');
       resetForm();
@@ -572,6 +635,7 @@
     // 日付とカテゴリーはそのまま、続けて入力できるようにする
     form.amount = '';
     form.memo = '';
+    form.hours = {};
     methodTouched = false;
     $('#amount').blur();
     renderInput();
@@ -699,6 +763,7 @@
     const card = tx.type === 'expense' ? findCard(tx.method) : null;
     if (card) sub.push(card.name + '・' + mdw(L.withdrawalDateFor(card, tx.date)) + '引落');
     else if (tx.type === 'expense') sub.push('現金');
+    if (tx.hours && tx.hours.length) sub.push(hoursText(tx.hours));
     return `<li class="tap" data-edit="${esc(tx.id)}">
       <div class="ic-wrap">${catIcon(cat, 34)}</div>
       <div class="grow"><div class="name">${esc(cat.name)}${tx.memo ? `<small>(${esc(tx.memo)})</small>` : ''}</div>
@@ -804,14 +869,25 @@
       <div class="totals" style="padding-top:0">
         <div><div class="label">収入</div><div class="val income">${num(s.income)}<small>円</small></div></div>
         <div><div class="label">支出</div><div class="val expense">${num(total)}<small>円</small></div></div>
-        <div><div class="label">可処分の残り</div><div class="val">${num(s.remaining)}<small>円</small></div></div>
+        <div><div class="label">あと使える</div><div class="val">${num(s.remaining)}<small>円</small></div></div>
+      </div>
+      <div class="card">
+        <h3>使えるお金の内訳(${s.basis === 'cash' ? 'カードは引落月で計上' : 'カードは使った月で計上'})</h3>
+        <div class="rows">
+          <div>収入</div><div class="income">${en(s.income)}</div>
+          ${s.recurring.map((r) => `<div class="sub">${esc(r.name)} ${mdw(r.date)}</div><div class="sub">${en(r.amount)}</div>`).join('')}
+          ${s.savings ? `<div>貯金目標</div><div>-${en(s.savings)}</div>` : ''}
+          <div>支出</div><div class="expense">-${en(s.spent)}</div>
+          <div class="sub">現金</div><div class="sub">${en(s.cashSpent)}</div>
+          ${s.basis === 'cash'
+            ? `<div class="sub">カード引落</div><div class="sub">${en(s.cardWithdrawn)}</div>`
+            : `<div class="sub">カード利用</div><div class="sub">${en(s.cardUsed)}</div>`}
+          <div class="total">あと使えるお金</div><div class="total">${en(s.remaining)}</div>
+        </div>
       </div>
       <div class="card"><h3>カテゴリー別の支出</h3>${catRows || '<p class="small muted" style="margin:0">支出の記録がありません</p>'}</div>
       <div class="card"><h3>支払方法別</h3><ul class="list">${methodRows || '<li class="small muted">記録がありません</li>'}</ul></div>
-      <div class="card"><h3>この月のカード引落</h3><ul class="list">${
-        s.withdrawals.map((w) => `<li><div class="small" style="width:66px">${mdw(w.date)}</div><div class="grow">${esc(w.name)}</div><div>${en(w.amount)}</div></li>`).join('') ||
-        '<li class="small muted">ありません</li>'
-      }</ul></div>`;
+      <div class="card"><h3>この月の引落・入金予定</h3><ul class="list">${scheduleItems(s, L.today()) || '<li class="small muted">ありません</li>'}</ul></div>`;
   }
 
   $('#view-report').addEventListener('click', (e) => {
@@ -855,7 +931,23 @@
   function renderMenu() {
     const st = state.settings;
     const cats = state.categories[catEditType].filter((c) => !c.archived);
+    const rates = st.hourlyRates || [];
     $('#view-menu').innerHTML = `
+      <div class="card">
+        <h3>アルバイトの時給</h3>
+        ${rates
+          .map(
+            (r, i) => `<div class="rate-edit">
+            <input type="number" id="rate-${i}" data-rate-idx="${i}" inputmode="numeric" min="0" value="${Number(r) || 0}" aria-label="時給${i + 1}">
+            <span>円</span>
+            <button type="button" class="mini-btn danger" data-del-rate="${i}" aria-label="この時給を削除">${I.ui('trash', 18, 1.6)}</button>
+          </div>`
+          )
+          .join('')}
+        <div class="btn-row" style="margin-top:10px"><button type="button" class="btn" id="add-rate">+ 時給を追加</button></div>
+        <p class="small muted">「入力 → 収入 → 時給×時間」で、ここの時給ごとに時間を入れると合計が収入になります。</p>
+      </div>
+
       <div class="card">
         <h3>カード</h3>
         ${activeCards()
@@ -881,7 +973,8 @@
       </div>
 
       <div class="card">
-        <h3>定期収入</h3>
+        <h3>毎月決まった額の収入</h3>
+        <p class="small muted" style="margin-top:0">固定給など、毎月同じ日に同じ額が入る収入があるときだけ使います。0円のあいだは計算に入りません。</p>
         ${state.incomes
           .map(
             (inc) => `<div class="sub-card" data-income="${esc(inc.id)}">
@@ -891,17 +984,17 @@
               <label>毎月<select data-f="day">${dayOptions(inc.day)}</select></label>
               <label>休日の場合<select data-f="holidayAdjust">${adjustOptions(inc.holidayAdjust)}</select></label>
             </div>
-            <div class="preview">今月は ${mdw(L.recurringIncomeDate(inc, ...L.monthKey(L.today()).split('-').map(Number)))} に入金</div>
+            <div class="preview">${Number(inc.amount) > 0 ? '今月は ' + mdw(L.recurringIncomeDate(inc, ...L.monthKey(L.today()).split('-').map(Number))) + ' に入金' : '0円なので使っていません'}</div>
             <div class="row-actions"><button type="button" class="btn small danger" data-del-income="${esc(inc.id)}">削除</button></div>
           </div>`
           )
           .join('')}
-        <button type="button" class="btn" id="add-income">+ 定期収入を追加</button>
-        <p class="small muted">月によって金額が違うときは、カレンダーで入金日の「(定期)」をタップするとその月だけ変更できます。ボーナスなど不定期の収入は「入力 → 収入」から記録してください。</p>
+        <button type="button" class="btn" id="add-income">+ 追加</button>
+        <p class="small muted">月によって金額が違うときは、カレンダーで入金日の「(定期)」をタップするとその月だけ変更できます。</p>
       </div>
 
       <div class="card">
-        <h3>可処分の計算</h3>
+        <h3>使えるお金の計算</h3>
         <div class="stack">
           <label>毎月の貯金目標(可処分から先に除く)<input type="number" id="set-savings" inputmode="numeric" min="0" value="${Number(st.savingsGoal) || 0}"></label>
           <label>カード払いの計上月<select id="set-basis">
@@ -972,6 +1065,8 @@
       const c = state.categories[catEditType].find((x) => x.id === catEl.dataset.catId);
       c[t.dataset.cf] = t.dataset.cf === 'name' ? t.value.trim() || 'カテゴリー' : t.value;
       rerender = t.dataset.cf !== 'name';
+    } else if (t.dataset.rateIdx !== undefined) {
+      state.settings.hourlyRates[Number(t.dataset.rateIdx)] = Math.max(0, Math.round(Number(t.value) || 0));
     } else if (t.id === 'set-savings') {
       state.settings.savingsGoal = Math.max(0, Number(t.value) || 0);
     } else if (t.id === 'set-basis') {
@@ -1012,8 +1107,12 @@
       if (!(await ask(used ? 'このカードの記録は残したまま、選択肢から外します。' : 'このカードを削除しますか?', { okLabel: '削除する', danger: true }))) return;
       if (used) findCard(id).archived = true;
       else state.cards = state.cards.filter((c) => c.id !== id);
+    } else if (t.id === 'add-rate') {
+      state.settings.hourlyRates = (state.settings.hourlyRates || []).concat([0]);
+    } else if (t.dataset.delRate !== undefined) {
+      state.settings.hourlyRates.splice(Number(t.dataset.delRate), 1);
     } else if (t.id === 'add-income') {
-      state.incomes.push({ id: uid(), name: '定期収入', amount: 0, day: 25, holidayAdjust: 'prev' });
+      state.incomes.push({ id: uid(), name: '固定収入', amount: 0, day: 25, holidayAdjust: 'prev' });
     } else if (t.dataset.delIncome) {
       if (!(await ask('この定期収入を削除しますか?過去の月の収入からも消えます。', { okLabel: '削除する', danger: true }))) return;
       state.incomes = state.incomes.filter((x) => x.id !== t.dataset.delIncome);

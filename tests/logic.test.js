@@ -110,3 +110,29 @@ test('上限超過のカードは避け、可処分超過なら現金', () => {
   assert.equal(L.suggestPayment(s, '2026-10-16', 6000).best.method, 'b');
   assert.equal(L.suggestPayment(s, '2026-10-16', 999999).best.method, 'cash');
 });
+
+test('ペース判定', () => {
+  const s = state({ transactions: [{ id: 1, type: 'expense', date: '2026-10-05', amount: 10000, method: 'cash' }] });
+  // 予算 = 給料 250,000 − 貯金目標 50,000
+  const r = L.monthSummary(s, '2026-10', '2026-10-10');
+  assert.equal(r.budget, 200000);
+  assert.equal(r.expectedSpent, Math.round((200000 * 10) / 31));
+  assert.equal(r.paceDiff, r.expectedSpent - 10000);
+});
+
+test('金額0の定期収入は数えない', () => {
+  const r = L.recurringIncomesInMonth([{ ...salary, amount: 0 }], {}, '2026-10');
+  assert.equal(r.length, 0);
+  assert.equal(L.nextIncomeDate([{ ...salary, amount: 0 }], '2026-10-01'), null);
+});
+
+test('時給×時間', () => {
+  assert.equal(L.hourlyTotal([{ rate: 1830, hours: 5 }, { rate: 1280, hours: 2.5 }]), 9150 + 3200);
+  assert.equal(L.hourlyTotal([{ rate: 1380, hours: 1 / 3 }]), 460);
+  assert.equal(L.parseHours('7.5'), 7.5);
+  assert.equal(L.parseHours('7:30'), 7.5);
+  assert.equal(L.parseHours('７．５'), 7.5);
+  assert.equal(L.parseHours('3時間15分'), 3.25);
+  assert.equal(L.parseHours(''), 0);
+  assert.equal(L.parseHours('abc'), 0);
+});

@@ -199,6 +199,8 @@
         const key = inc.id + ':' + by + '-' + pad(bm);
         const amount =
           overrides && overrides[key] !== undefined ? Number(overrides[key]) : Number(inc.amount);
+        // 金額 0 の定期収入は「使っていない」とみなす
+        if (!(amount > 0)) return;
         result.push({
           kind: 'recurring',
           incomeId: inc.id,
@@ -217,6 +219,7 @@
     let best = null;
     const { y, m } = parse(fromDate);
     (incomes || []).forEach((inc) => {
+      if (!(Number(inc.amount) > 0)) return;
       for (let i = 0; i < 3; i++) {
         const base = new Date(y, m - 1 + i, 1);
         const d = recurringIncomeDate(inc, base.getFullYear(), base.getMonth() + 1);
@@ -303,6 +306,12 @@
     else daysLeft = diffDays(todayStr, last) + 1;
     const perDay = daysLeft > 0 ? Math.floor(Math.max(remaining, 0) / daysLeft) : 0;
 
+    // ペース判定:月の経過日数に比例して使った場合の金額と比べる
+    const dim = daysInMonth(y, m);
+    const elapsed = dim - daysLeft + (daysLeft > 0 ? 1 : 0); // 今日を含む経過日数
+    const expectedSpent = Math.round((Math.max(budget, 0) * Math.min(elapsed, dim)) / dim);
+    const paceDiff = expectedSpent - spent; // プラスなら予定より使っていない
+
     // 今日使った分を除いた「今日の残り」
     const spentToday = expensesInMonth
       .filter((t) => t.date === todayStr)
@@ -327,7 +336,10 @@
       remaining,
       daysLeft,
       perDay,
-      todayAllowance: perDayBeforeToday - spentToday
+      spentToday,
+      todayAllowance: perDayBeforeToday - spentToday,
+      expectedSpent,
+      paceDiff
     };
   }
 
@@ -447,6 +459,23 @@
     return { best, ranked, reason, nextIncome };
   }
 
+  // 時給×時間の合計。rows = [{ rate, hours }]
+  function hourlyTotal(rows) {
+    return Math.round((rows || []).reduce((s, r) => s + Number(r.rate) * (Number(r.hours) || 0), 0));
+  }
+
+  // "7.5" / "7:30" / "7時間30分" などを時間(小数)にする
+  function parseHours(text) {
+    const s = String(text == null ? '' : text)
+      .replace(/[０-９．：]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+      .trim();
+    if (!s) return 0;
+    const m = s.match(/^(\d+)\s*(?::|時間)\s*(\d+)\s*分?$/);
+    if (m) return Number(m[1]) + Number(m[2]) / 60;
+    const n = Number(s.replace(/時間$/, ''));
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  }
+
   function formatMD(s) {
     const { m, d } = parse(s);
     return m + '/' + d;
@@ -476,6 +505,8 @@
     monthSummary,
     dailyTotals,
     suggestPayment,
+    hourlyTotal,
+    parseHours,
     formatMD
   };
 
