@@ -80,7 +80,9 @@
       [-1, 'expense', 750, 'food', 'cash', 'ランチ'],
       [-1, 'expense', 780, 'food', 'cardB', 'コンビニ'],
       [-3, 'expense', 1480, 'daily', 'paypay', 'ドラッグストア'],
-      [-5, 'expense', 650, 'food', 'paypay', 'カフェ']
+      [-5, 'expense', 650, 'food', 'paypay', 'カフェ'],
+      [-5, 'charge', 1000, null, 'paypay', ''],
+      [-3, 'charge', 2000, null, 'paypay', '']
     ];
     s.transactions = rows.map(([d, type, amount, category, method, memo, hours], i) => ({
       id: 'demo' + i,
@@ -473,6 +475,7 @@
     $('#method-row').hidden = !isExpense;
     $('#suggest-hint').hidden = !isExpense;
     if (isExpense) renderMethods();
+    else $('#wallet-info').hidden = true;
 
     const hourly = isHourly();
     $('#income-mode-row').hidden = isExpense;
@@ -566,7 +569,7 @@
     const curWallet = findWallet(form.method);
     if (curWallet && !wallets.includes(curWallet)) wallets.push(curWallet);
     const methods = [{ id: 'cash', name: '現金', wd: 'その場で' }]
-      .concat(wallets.map((w) => ({ id: w.id, name: w.name, wd: 'チャージ残高' })))
+      .concat(wallets.map((w) => ({ id: w.id, name: w.name, wd: '残高 ' + en(L.walletBalance(state, w)) })))
       .concat(activeCards().map((c) => ({ id: c.id, name: c.name, wd: mdw(L.withdrawalDateFor(c, form.date)) + '引落' })));
     // 編集中の記録が削除済みカードの場合も表示する
     const cur = findCard(form.method);
@@ -579,7 +582,39 @@
       )
       .join('');
     $('#suggest-hint').textContent = sug.reason;
+    renderWalletInfo();
   }
+
+  // コード決済を選んだときの残高とチャージ
+  function renderWalletInfo() {
+    const el = $('#wallet-info');
+    const w = form.type === 'expense' ? findWallet(form.method) : null;
+    el.hidden = !w;
+    if (!w) return;
+    const bal = L.walletBalance(state, w);
+    // 編集中は、この記録の分を残高に戻して比べる
+    const editing = form.editingId && state.transactions.find((t) => t.id === form.editingId);
+    const available = bal + (editing && editing.method === w.id && editing.type === 'expense' ? Number(editing.amount) : 0);
+    const short = (Number(form.amount) || 0) - available;
+    el.innerHTML = `<span>${esc(w.name)}残高 <b>${en(bal)}</b>${short > 0 ? ` <span class="short">${en(short)} 足りません</span>` : ''}</span>
+      <button type="button" class="btn small" data-charge-add="${esc(w.id)}" data-suggest="${short > 0 ? Math.ceil(short / 1000) * 1000 : 1000}">${I.ui('plus', 14, 2)}チャージを記録</button>`;
+  }
+
+  $('#wallet-info').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-charge-add]');
+    if (!b) return;
+    const w = findWallet(b.dataset.chargeAdd);
+    const amount = await ask(`${w.name}にチャージした金額(${mdw(form.date)})\n口座からの移動なので、あと使えるお金は減りません。`, {
+      withInput: true,
+      value: b.dataset.suggest,
+      okLabel: '記録する'
+    });
+    if (!amount) return;
+    state.transactions.push({ id: uid(), createdAt: new Date().toISOString(), type: 'charge', date: form.date, amount, method: w.id, memo: '' });
+    save();
+    toast(`チャージを記録しました(残高 ${en(L.walletBalance(state, w))})`);
+    renderMethods();
+  });
 
   function setDate(d) {
     if (!d) return;
@@ -747,9 +782,11 @@
     const selected = ds === calSelected;
     const items = [];
     let net = 0;
+    let counted = 0; // 合計に含める行の数(引落・チャージは含めない)
     if (info) {
       info.incomes.forEach((r) => {
         net += r.amount;
+        counted++;
         items.push(`<li class="tap" data-override="${esc(r.periodKey)}" data-amount="${r.amount}" data-name="${esc(r.name)}">
           <div class="ic-wrap">${I.category('wallet', '#e2a72a', 34)}</div>
           <div class="grow"><div class="name">${esc(r.name)}<small>(定期)</small></div><div class="sub">タップで今月の金額を変更</div></div>
@@ -764,14 +801,16 @@
         .slice()
         .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
         .forEach((tx) => {
+          if (tx.type === 'charge') return items.push(chargeRow(tx));
           net += tx.type === 'income' ? Number(tx.amount) : -Number(tx.amount);
+          counted++;
           items.push(txRow(tx));
         });
     }
     return `<div class="day-group" data-group="${ds}">
       <div class="day-head ${selected ? 'selected' : ''}">
         <span>${longDate(ds)}${L.holidayName(ds) ? ' ' + esc(L.holidayName(ds)) : ''}${selected ? `<button type="button" class="add" data-add="${ds}">${I.ui('plus', 14, 2)}記録</button>` : ''}</span>
-        <span>${items.length ? en(net) : ''}</span>
+        <span>${counted ? en(net) : ''}</span>
       </div>
       <ul class="day-items">${items.join('') || '<li class="empty">記録はありません</li>'}</ul></div>`;
   }
@@ -791,9 +830,16 @@
       <div class="amount ${tx.type === 'income' ? 'income' : ''}">${en(tx.amount)}</div><span class="go">${I.ui('chevR', 20, 1.6)}</span></li>`;
   }
 
+  function chargeRow(tx) {
+    return `<li class="tap" data-charge="${esc(tx.id)}"><div class="ic-wrap">${I.category('wallet', '#a59f93', 34)}</div>
+      <div class="grow"><div class="name">${esc(methodName(tx.method))} チャージ</div><div class="sub">口座からの移動・合計には含みません</div></div>
+      <div class="amount info">${en(tx.amount)}</div></li>`;
+  }
+
   function renderSearch(q) {
     const ql = q.toLowerCase();
     const hits = state.transactions
+      .filter((tx) => tx.type !== 'charge')
       .filter((tx) => (tx.memo || '').toLowerCase().includes(ql) || findCategory(tx.category).name.toLowerCase().includes(ql))
       .sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt));
     const total = hits.reduce((a, tx) => a + (tx.type === 'income' ? 1 : -1) * Number(tx.amount), 0);
@@ -825,6 +871,16 @@
   $('#cal-list').addEventListener('click', async (e) => {
     const add = e.target.closest('[data-add]');
     if (add) return addOn(add.dataset.add);
+    const ch = e.target.closest('[data-charge]');
+    if (ch) {
+      const tx = state.transactions.find((t) => t.id === ch.dataset.charge);
+      if (!(await ask(`${methodName(tx.method)}へのチャージ ${en(tx.amount)} を削除しますか?`, { okLabel: '削除する', danger: true }))) return;
+      state.transactions = state.transactions.filter((t) => t !== tx);
+      save();
+      renderCalendar();
+      toast('削除しました');
+      return;
+    }
     const ov = e.target.closest('[data-override]');
     if (ov) {
       const n = await ask(ov.dataset.name + 'のこの月の金額', { withInput: true, value: ov.dataset.amount, okLabel: '変更する' });
@@ -907,7 +963,8 @@
         </div>
       </div>
       <div class="card"><h3>カテゴリー別の支出</h3>${catRows || '<p class="small muted" style="margin:0">支出の記録がありません</p>'}</div>
-      <div class="card"><h3>支払方法別</h3><ul class="list">${methodRows || '<li class="small muted">記録がありません</li>'}</ul></div>
+      <div class="card"><h3>支払方法別</h3><ul class="list">${methodRows || '<li class="small muted">記録がありません</li>'}</ul>
+        ${activeWallets().map((w) => `<p class="small muted" style="margin:8px 0 0">${esc(w.name)}の今の残高:${en(L.walletBalance(state, w))}</p>`).join('')}</div>
       <div class="card"><h3>この月の引落・入金予定</h3><ul class="list">${scheduleItems(s, L.today()) || '<li class="small muted">ありません</li>'}</ul></div>`;
   }
 
@@ -973,14 +1030,17 @@
         <h3>コード決済・電子マネー</h3>
         ${activeWallets()
           .map(
-            (w) => `<div class="rate-edit">
-            <input type="text" id="wallet-${esc(w.id)}" data-wallet="${esc(w.id)}" value="${esc(w.name)}" maxlength="12" aria-label="名前">
-            <button type="button" class="mini-btn danger" data-del-wallet="${esc(w.id)}" aria-label="削除">${I.ui('trash', 18, 1.6)}</button>
+            (w) => `<div class="sub-card">
+            <div class="form-grid">
+              <label>名前<input type="text" id="wallet-${esc(w.id)}" data-wallet="${esc(w.id)}" value="${esc(w.name)}" maxlength="12"></label>
+              <label>今の残高<input type="number" id="wallet-bal-${esc(w.id)}" data-wallet-balance="${esc(w.id)}" inputmode="numeric" value="${L.walletBalance(state, w)}"></label>
+            </div>
+            <div class="row-actions"><button type="button" class="btn small danger" data-del-wallet="${esc(w.id)}">削除</button></div>
           </div>`
           )
           .join('')}
         <div class="btn-row" style="margin-top:10px"><button type="button" class="btn" id="add-wallet">+ 追加</button></div>
-        <p class="small muted">口座からのチャージは記録しません(自分のお金の移動なので)。お店で払ったときに、支払方法をこれにして支出を記録してください。</p>
+        <p class="small muted">お店で払ったときは、支払方法をこれにして支出を記録します。チャージは入力画面でこれを選ぶと出る「チャージを記録」から。チャージは口座からの移動なので、あと使えるお金は減りません。残高がアプリの表示とずれたら「今の残高」を実際の額に直してください。</p>
       </div>
 
       <div class="card">
@@ -1100,6 +1160,9 @@
       const c = state.categories[catEditType].find((x) => x.id === catEl.dataset.catId);
       c[t.dataset.cf] = t.dataset.cf === 'name' ? t.value.trim() || 'カテゴリー' : t.value;
       rerender = t.dataset.cf !== 'name';
+    } else if (t.dataset.walletBalance) {
+      const w = findWallet(t.dataset.walletBalance);
+      w.balanceAdjust = (Number(w.balanceAdjust) || 0) + (Math.round(Number(t.value) || 0) - L.walletBalance(state, w));
     } else if (t.dataset.wallet) {
       findWallet(t.dataset.wallet).name = t.value.trim() || 'コード決済';
     } else if (t.dataset.rateIdx !== undefined) {

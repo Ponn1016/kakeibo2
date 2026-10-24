@@ -136,3 +136,20 @@ test('時給×時間', () => {
   assert.equal(L.parseHours(''), 0);
   assert.equal(L.parseHours('abc'), 0);
 });
+
+test('チャージは収入にも支出にも数えず、残高だけ増やす', () => {
+  const s = state({
+    transactions: [
+      { id: 1, type: 'charge', date: '2026-10-10', amount: 1000, method: 'paypay' },
+      { id: 2, type: 'expense', date: '2026-10-10', amount: 500, method: 'paypay' }
+    ]
+  });
+  const sum = L.monthSummary(s, '2026-10', '2026-10-10');
+  assert.equal(sum.spent, 500);
+  assert.equal(sum.income, 250000);
+  const day = L.dailyTotals(s, '2026-10')['2026-10-10'];
+  assert.equal(day.income, 0);
+  assert.equal(day.expense, 500);
+  assert.equal(L.walletBalance(s, { id: 'paypay' }), 500);
+  assert.equal(L.walletBalance(s, { id: 'paypay', balanceAdjust: 300 }), 800);
+});

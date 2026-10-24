@@ -223,6 +223,12 @@ main { max-width: 600px; margin: 0 auto; padding: 0 16px 16px; }
   padding: 0 7px;
   white-space: nowrap;
 }
+.wallet-info { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 10px 0 2px; font-size: 14px; }
+.wallet-info[hidden] { display: none; }
+.wallet-info b { font-variant-numeric: tabular-nums; }
+.wallet-info .short { color: var(--warn); font-size: 12px; margin-left: 4px; }
+.wallet-info .btn { display: inline-flex; align-items: center; gap: 2px; }
+.modal-box p { white-space: pre-line; }
 .hint { font-size: 12px; color: var(--muted); margin: 8px 0 0; min-height: 1em; }
 .hint[hidden] { display: none; }
 

@@ -355,7 +355,8 @@
       const day = get(t.date);
       day.txs.push(t);
       if (t.type === 'expense') day.expense += Number(t.amount);
-      else day.income += Number(t.amount);
+      else if (t.type === 'income') day.income += Number(t.amount);
+      // type 'charge'(コード決済へのチャージ)は自分のお金の移動なので、収入にも支出にも数えない
     });
     recurringIncomesInMonth(state.incomes, state.incomeOverrides, mk).forEach((r) => {
       const day = get(r.date);
@@ -459,6 +460,20 @@
     return { best, ranked, reason, nextIncome };
   }
 
+  /*
+   * コード決済の残高 = 調整額 + チャージ − その決済での支払い
+   * wallet = { id, balanceAdjust }。balanceAdjust は実際の残高に合わせるための差分
+   */
+  function walletBalance(state, wallet) {
+    let bal = Number(wallet.balanceAdjust) || 0;
+    (state.transactions || []).forEach((t) => {
+      if (t.method !== wallet.id) return;
+      if (t.type === 'charge') bal += Number(t.amount);
+      else if (t.type === 'expense') bal -= Number(t.amount);
+    });
+    return bal;
+  }
+
   // 時給×時間の合計。rows = [{ rate, hours }]
   function hourlyTotal(rows) {
     return Math.round((rows || []).reduce((s, r) => s + Number(r.rate) * (Number(r.hours) || 0), 0));
@@ -505,6 +520,7 @@
     monthSummary,
     dailyTotals,
     suggestPayment,
+    walletBalance,
     hourlyTotal,
     parseHours,
     formatMD
