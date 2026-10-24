@@ -558,7 +558,8 @@
   function renderSubmit() {
     const btn = $('#save-btn');
     btn.textContent = form.editingId ? '変更する' : form.type === 'expense' ? '支出を入力する' : '収入を入力する';
-    btn.classList.toggle('disabled', !Number(form.amount));
+    const ws = walletShortfall();
+    btn.classList.toggle('disabled', !Number(form.amount) || !!(ws && ws.short > 0));
     $('#delete-btn').hidden = !form.editingId;
   }
 
@@ -586,34 +587,47 @@
   }
 
   // コード決済を選んだときの残高とチャージ
-  function renderWalletInfo() {
-    const el = $('#wallet-info');
+  // コード決済を選んでいるとき、その残高と不足額。選んでいなければ null
+  function walletShortfall() {
     const w = form.type === 'expense' ? findWallet(form.method) : null;
-    el.hidden = !w;
-    if (!w) return;
+    if (!w) return null;
     const bal = L.walletBalance(state, w);
     // 編集中は、この記録の分を残高に戻して比べる
     const editing = form.editingId && state.transactions.find((t) => t.id === form.editingId);
     const available = bal + (editing && editing.method === w.id && editing.type === 'expense' ? Number(editing.amount) : 0);
     const short = (Number(form.amount) || 0) - available;
-    el.innerHTML = `<span>${esc(w.name)}残高 <b>${en(bal)}</b>${short > 0 ? ` <span class="short">${en(short)} 足りません</span>` : ''}</span>
-      <button type="button" class="btn small" data-charge-add="${esc(w.id)}" data-suggest="${short > 0 ? Math.ceil(short / 1000) * 1000 : 1000}">${I.ui('plus', 14, 2)}チャージを記録</button>`;
+    return { w, bal, short: Math.max(0, short), suggest: short > 0 ? Math.ceil(short / 1000) * 1000 : 1000 };
   }
 
-  $('#wallet-info').addEventListener('click', async (e) => {
-    const b = e.target.closest('[data-charge-add]');
-    if (!b) return;
-    const w = findWallet(b.dataset.chargeAdd);
-    const amount = await ask(`${w.name}にチャージした金額(${mdw(form.date)})\n口座からの移動なので、あと使えるお金は減りません。`, {
+  // コード決済を選んだときの残高とチャージ
+  function renderWalletInfo() {
+    const el = $('#wallet-info');
+    const ws = walletShortfall();
+    el.hidden = !ws;
+    renderSubmit();
+    if (!ws) return;
+    el.innerHTML = `<span>${esc(ws.w.name)}残高 <b>${en(ws.bal)}</b>${ws.short ? ` <span class="short">${en(ws.short)} 足りません</span>` : ''}</span>
+      <button type="button" class="btn small" data-charge-add>${I.ui('plus', 14, 2)}チャージを記録</button>`;
+  }
+
+  // チャージ額を聞いて記録する。記録したら true
+  async function recordCharge(w, suggest, message) {
+    const amount = await ask(`${message ? message + '\n' : ''}${w.name}にチャージした金額(${mdw(form.date)})\n口座からの移動なので、あと使えるお金は減りません。`, {
       withInput: true,
-      value: b.dataset.suggest,
+      value: suggest,
       okLabel: '記録する'
     });
-    if (!amount) return;
+    if (!amount) return false;
     state.transactions.push({ id: uid(), createdAt: new Date().toISOString(), type: 'charge', date: form.date, amount, method: w.id, memo: '' });
     save();
     toast(`チャージを記録しました(残高 ${en(L.walletBalance(state, w))})`);
     renderMethods();
+    return true;
+  }
+
+  $('#wallet-info').addEventListener('click', (e) => {
+    const ws = walletShortfall();
+    if (e.target.closest('[data-charge-add]') && ws) recordCharge(ws.w, ws.suggest);
   });
 
   function setDate(d) {
@@ -657,12 +671,22 @@
 
   $('#save-btn').addEventListener('click', saveForm);
 
-  function saveForm() {
+  async function saveForm() {
     const amount = Number(form.amount);
     if (!amount || amount <= 0) {
       toast(isHourly() ? '時間を入力してください' : '金額を入力してください');
       if (!isHourly()) $('#amount').focus();
       return;
+    }
+    // コード決済の残高が足りないときは、先にチャージを記録してもらう
+    const ws = walletShortfall();
+    if (ws && ws.short > 0) {
+      const charged = await recordCharge(ws.w, ws.suggest, `${ws.w.name}の残高が ${en(ws.short)} 足りないため、このままでは記録できません。`);
+      const again = walletShortfall();
+      if (!charged || (again && again.short > 0)) {
+        if (charged) toast(`まだ ${en(again.short)} 足りません`);
+        return;
+      }
     }
     const data = {
       type: form.type,
