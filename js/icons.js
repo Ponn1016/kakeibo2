@@ -24,6 +24,7 @@
     gift: { label: 'プレゼント', d: '<rect x="4" y="9" width="16" height="4"/><path d="M5.5 13v8h13v-8M12 9v12"/><path d="M12 9c-1-3-5-4-5-1.5S11 9 12 9zM12 9c1-3 5-4 5-1.5S13 9 12 9z"/>' },
     sparkle: { label: 'キラキラ', d: '<path d="M11 3l1.8 5.2L18 10l-5.2 1.8L11 17l-1.8-5.2L4 10l5.2-1.8z"/><path d="M18.5 15.5v5M16 18h5"/>' },
     coins: { label: 'コイン', d: '<path d="M3 15.5h3.5l3 1.5h4a1.5 1.5 0 0 1 0 3H9M13.5 20l5-2.2a1.6 1.6 0 0 1 1.9 2.4L17 22H9l-3-1.5H3"/><circle cx="10" cy="5.5" r="2.5"/><circle cx="15.5" cy="6.5" r="2"/><circle cx="12" cy="11" r="2"/>' },
+    bank: { label: '銀行', d: '<path d="M3 9.5 12 4l9 5.5"/><path d="M4 20h16M5.5 10.5v7M10 10.5v7M14 10.5v7M18.5 10.5v7"/>' },
     box: { label: '箱', d: '<path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z"/><path d="M3 7.5 12 12l9-4.5M12 12v9"/>' }
   };
 

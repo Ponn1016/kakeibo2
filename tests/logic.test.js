@@ -75,7 +75,7 @@ function state(extra) {
   };
 }
 
-test('今月の可処分と1日の目安', () => {
+test('今月の可処分(先月からの繰越を含む)', () => {
   const s = state({
     transactions: [
       { id: 1, type: 'expense', date: '2026-10-01', amount: 30000, method: 'cash' },
@@ -85,16 +85,18 @@ test('今月の可処分と1日の目安', () => {
     ]
   });
   const acc = L.monthSummary(s, '2026-10', '2026-10-23');
+  // 9月:給料 250,000 − カード 10,000 = 240,000 を繰り越す
+  assert.equal(acc.carry, 240000);
   assert.equal(acc.income, 255000);
-  assert.equal(acc.budget, 205000);
+  assert.equal(acc.budget, 240000 + 255000 - 50000);
   assert.equal(acc.spent, 50000);
-  assert.equal(acc.remaining, 155000);
-  assert.equal(acc.daysLeft, 9);
-  assert.equal(acc.perDay, Math.floor(155000 / 9));
+  assert.equal(acc.remaining, 445000 - 50000);
   assert.equal(acc.cardWithdrawn, 10000);
 
+  // 引落月で計上:9月はカードの引落がないので 250,000 を繰り越し、10月に引落 10,000 を数える
   s.settings.basis = 'cash';
   const cash = L.monthSummary(s, '2026-10', '2026-10-23');
+  assert.equal(cash.carry, 250000);
   assert.equal(cash.spent, 40000);
 });
 
@@ -153,4 +155,29 @@ test('チャージは収入にも支出にも数えず、残高だけ増やす',
   assert.equal(day.expense, 500);
   assert.equal(L.walletBalance(s, { id: 'paypay' }), 500);
   assert.equal(L.walletBalance(s, { id: 'paypay', balanceAdjust: 300 }), 800);
+});
+
+test('使い始めの残高と未払いカード代を記録して繰り越す、貯蓄は使えるお金に入れない', () => {
+  const s = state({
+    settings: { savingsGoal: 10000, basis: 'accrual', savingsAdjust: 300000 },
+    incomes: [],
+    transactions: [
+      { id: 1, type: 'income', date: '2026-10-25', amount: 200000, category: 'inc-other', method: 'cash', memo: '開始時の残高' },
+      { id: 2, type: 'expense', date: '2026-10-25', amount: 50000, method: 'cash', memo: '未払いのカード代' },
+      { id: 3, type: 'income', date: '2026-10-26', amount: 10000, category: 'salary', method: 'cash' },
+      { id: 4, type: 'expense', date: '2026-10-27', amount: 5000, method: 'a' },
+      { id: 5, type: 'income', date: '2026-10-27', amount: 3000, category: 'savings', method: 'cash' } // B銀行への入金
+    ]
+  });
+  const oct = L.monthSummary(s, '2026-10', '2026-10-27');
+  assert.equal(oct.carry, 0);
+  assert.equal(oct.income, 210000);
+  assert.equal(oct.remaining, 210000 - 55000 - 10000);
+
+  const nov = L.monthSummary(s, '2026-11', '2026-11-01');
+  assert.equal(nov.carry, 155000);
+  assert.equal(nov.remaining, 155000 - 10000); // 残しておく額は積み上がらない
+
+  assert.equal(L.savingsBalance(s), 303000);
+  assert.equal(L.dailyTotals(s, '2026-10')['2026-10-27'].income, 0);
 });
