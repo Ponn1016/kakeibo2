@@ -98,12 +98,10 @@
     return s;
   }
 
-  function load() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return defaultState();
-      const data = JSON.parse(raw);
-      const base = defaultState();
+  // 保存されていたデータ(端末・サーバー・読み込んだファイル)を今の形にそろえる
+  function normalize(data) {
+    if (!data || typeof data !== 'object') return defaultState();
+    const base = defaultState();
       const cats = data.categories || {};
       // 初期名のままのカードは実際のカード名にする
       const rename = { cardA: ['カードA', 'JALカード'], cardB: ['カードB', '三井住友NL'] };
@@ -119,6 +117,12 @@
           income: Array.isArray(cats.income) && typeof cats.income[0] === 'object' ? cats.income : base.categories.income
         }
       };
+  }
+
+  function load() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? normalize(JSON.parse(raw)) : defaultState();
     } catch (e) {
       console.error(e);
       return defaultState();
@@ -129,12 +133,19 @@
   // お試し版(window.KAKEIBO_DEMO)では、記録が空ならサンプルを入れた状態で開く
   if (window.KAKEIBO_DEMO && !state.transactions.length) state = demoState();
 
-  function save() {
+  // この端末にだけ保存する
+  function writeLocal() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch (e) {
       toast('保存に失敗しました');
     }
+  }
+
+  // 変更を保存する(ログイン中なら少しあとにサーバーへも送る)
+  function save() {
+    writeLocal();
+    markDirty();
   }
 
   // ---------- 表示ユーティリティ ----------
@@ -205,6 +216,7 @@
     const ok = $('#modal-ok');
     $('#modal-msg').textContent = message;
     ok.textContent = o.okLabel || 'OK';
+    $('#modal-cancel').textContent = o.cancelLabel || 'キャンセル';
     ok.classList.toggle('danger-fill', !!o.danger);
     input.hidden = !o.withInput;
     input.value = o.value != null ? num(o.value) : '';
@@ -221,7 +233,7 @@
       ok.onclick = accept;
       $('#modal-cancel').onclick = () => done(o.withInput ? null : false);
       modal.onclick = (e) => {
-        if (e.target === modal) done(o.withInput ? null : false);
+        if (e.target === modal && !o.mustChoose) done(o.withInput ? null : false);
       };
       input.onkeydown = (e) => {
         if (e.key === 'Enter') accept();
@@ -1035,6 +1047,7 @@
     const cats = state.categories[catEditType].filter((c) => !c.archived);
     const rates = st.hourlyRates || [];
     $('#view-menu').innerHTML = `
+      ${syncCard()}
       <div class="card">
         <h3>アルバイトの時給</h3>
         ${rates
@@ -1269,7 +1282,8 @@
     } else if (t.id === 'import-btn') {
       return $('#import-file').click();
     } else if (t.id === 'reset-btn') {
-      if (!(await ask('すべての記録と設定を削除します。元に戻せません。', { okLabel: 'すべて削除', danger: true }))) return;
+      const msg = 'すべての記録と設定を削除します。元に戻せません。' + (client && client.session ? '\nログイン中なので、サーバーのデータも空になります。' : '');
+      if (!(await ask(msg, { okLabel: 'すべて削除', danger: true }))) return;
       state = defaultState();
     } else {
       return;
@@ -1298,8 +1312,8 @@
         const data = JSON.parse(reader.result);
         if (!Array.isArray(data.transactions) || !Array.isArray(data.cards)) throw new Error('形式が違います');
         if (!(await ask('今のデータを、読み込んだデータで置き換えます。', { okLabel: '置き換える' }))) return;
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-        state = load();
+        state = normalize(data);
+        save();
         toast('読み込みました');
         renderMenu();
       } catch (err) {
@@ -1309,15 +1323,198 @@
     reader.readAsText(file);
   }
 
+  // ---------- 同期(Supabase) ----------
+  // ログイン中は、変更のたびに少し待ってからサーバーへ送る。開いたとき・戻ったときにサーバーの変更を取り込む
+
+  const SYNC_META_KEY = 'kakeibo2:syncmeta';
+  const supa = window.KAKEIBO_SUPABASE || {};
+  const client =
+    !window.KAKEIBO_DEMO && window.KakeiboSync && supa.url && supa.key
+      ? window.KakeiboSync.createClient({ url: supa.url, key: supa.key, storage: localStorage })
+      : null;
+
+  // lastSyncedAt: 前回同期したときのサーバーの更新時刻、dirty: そのあとこの端末で変更があったか
+  let syncMeta = { lastSyncedAt: null, dirty: false };
+  try {
+    syncMeta = { ...syncMeta, ...JSON.parse(localStorage.getItem(SYNC_META_KEY) || '{}') };
+  } catch (e) {
+    /* 読めなければ初回として扱う */
+  }
+  let syncStatus = { state: 'idle', message: '', at: null };
+  let syncing = false;
+  let syncAgain = false;
+  let changeSeq = 0;
+  let syncTimer;
+
+  function writeSyncMeta() {
+    try {
+      localStorage.setItem(SYNC_META_KEY, JSON.stringify(syncMeta));
+    } catch (e) {
+      /* 次の同期でまた確認するだけなので無視する */
+    }
+  }
+
+  function markDirty() {
+    if (!client) return;
+    syncMeta.dirty = true;
+    changeSeq++;
+    writeSyncMeta();
+    scheduleSync(1500);
+  }
+
+  function scheduleSync(delay) {
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => syncNow(), delay);
+  }
+
+  function setSyncStatus(st, message) {
+    syncStatus = { state: st, message: message || '', at: st === 'ok' ? new Date() : syncStatus.at };
+    const el = $('#sync-status');
+    if (el) el.textContent = syncStatusText();
+  }
+
+  function syncStatusText() {
+    const s = syncStatus;
+    if (s.state === 'syncing') return '同期中…';
+    if (s.state === 'offline') return 'オフラインです。つながったら自動で同期します';
+    if (s.state === 'error') return '同期できませんでした:' + s.message;
+    if (s.state === 'cancelled') return '同期を保留しています。「今すぐ同期」で選び直せます';
+    if (syncMeta.dirty) return 'まだ送っていない変更があります';
+    if (s.state === 'ok') return '同期済み(' + L.pad(s.at.getHours()) + ':' + L.pad(s.at.getMinutes()) + ')';
+    return syncMeta.lastSyncedAt ? '同期済み' : 'まだ同期していません';
+  }
+
+  async function resolveConflict({ first, remote }) {
+    const r = normalize(remote.data);
+    const msg = first
+      ? `この端末とサーバーの両方に家計簿のデータがあります。どちらを使いますか?\nサーバー:記録 ${r.transactions.length}件\nこの端末:記録 ${state.transactions.length}件\n選ばなかった方は上書きされます。`
+      : `この端末とサーバーの両方で、別々に変更がありました。どちらを残しますか?\nサーバー:記録 ${r.transactions.length}件\nこの端末:記録 ${state.transactions.length}件`;
+    const useRemote = await ask(msg, { okLabel: 'サーバーのデータ', cancelLabel: 'この端末のデータ', mustChoose: true });
+    return useRemote ? 'remote' : 'local';
+  }
+
+  async function syncNow(manual) {
+    if (!client || !client.session) return;
+    if (!navigator.onLine) return setSyncStatus('offline');
+    if (syncing) {
+      syncAgain = true;
+      return;
+    }
+    syncing = true;
+    setSyncStatus('syncing');
+    const seq = changeSeq;
+    try {
+      const r = await window.KakeiboSync.syncOnce({
+        client,
+        local: { state, isEmpty: !state.transactions.length },
+        lastSyncedAt: syncMeta.lastSyncedAt,
+        dirty: syncMeta.dirty,
+        resolveConflict
+      });
+      if (r.action === 'pulled' && changeSeq !== seq) {
+        // 取り込み中にこの端末で変更されたので、取り込まずにもう一度確かめる
+        syncAgain = true;
+      } else {
+        if (r.action === 'pulled') {
+          state = normalize(r.state);
+          writeLocal();
+          syncMeta.dirty = false;
+          render();
+          toast('サーバーのデータを読み込みました');
+        } else if (r.action === 'pushed') {
+          syncMeta.dirty = changeSeq !== seq;
+        }
+        if (r.action !== 'cancelled') syncMeta.lastSyncedAt = r.lastSyncedAt;
+        writeSyncMeta();
+      }
+      setSyncStatus(r.action === 'cancelled' ? 'cancelled' : 'ok');
+      if (manual && r.action !== 'pulled' && r.action !== 'cancelled') toast('同期しました');
+    } catch (e) {
+      if (e.offline) setSyncStatus('offline');
+      else {
+        setSyncStatus('error', e.message);
+        if (manual || e.loggedOut) toast(e.message);
+        if (e.loggedOut && currentView === 'menu') renderMenu();
+      }
+    } finally {
+      syncing = false;
+      if (syncAgain) {
+        syncAgain = false;
+        scheduleSync(300);
+      }
+    }
+  }
+
+  function syncCard() {
+    if (!client) return '';
+    const s = client.session;
+    if (!s) {
+      return `<div class="card" id="sync-card">
+        <h3>サーバーに保存(同期)</h3>
+        <p class="small muted" style="margin-top:0">ログインすると、データがサーバーにも保存されます。iPhone を替えたりアプリを消したりしても、ログインし直せば元に戻ります。</p>
+        <form class="stack" id="login-form">
+          <label>メールアドレス<input type="email" id="login-email" autocomplete="username" required></label>
+          <label>パスワード<input type="password" id="login-password" autocomplete="current-password" required></label>
+          <button type="submit" class="btn primary" id="login-btn">ログイン</button>
+        </form>
+      </div>`;
+    }
+    return `<div class="card" id="sync-card">
+      <h3>サーバーに保存(同期)</h3>
+      <p style="margin:0">${esc(s.email || '')} でログイン中</p>
+      <p class="small muted" id="sync-status" style="margin:4px 0 10px">${esc(syncStatusText())}</p>
+      <div class="btn-row">
+        <button type="button" class="btn" id="sync-now">今すぐ同期</button>
+        <button type="button" class="btn danger" id="logout-btn">ログアウト</button>
+      </div>
+    </div>`;
+  }
+
+  menuEl.addEventListener('submit', async (e) => {
+    if (e.target.id !== 'login-form') return;
+    e.preventDefault();
+    const btn = $('#login-btn');
+    btn.disabled = true;
+    btn.textContent = 'ログイン中…';
+    try {
+      await client.login($('#login-email').value.trim(), $('#login-password').value);
+      syncMeta = { lastSyncedAt: null, dirty: false };
+      writeSyncMeta();
+      toast('ログインしました');
+      renderMenu();
+      await syncNow(true);
+    } catch (err) {
+      toast(err.message);
+      btn.disabled = false;
+      btn.textContent = 'ログイン';
+    }
+  });
+
+  menuEl.addEventListener('click', async (e) => {
+    if (e.target.closest('#sync-now')) return syncNow(true);
+    if (!e.target.closest('#logout-btn')) return;
+    if (!(await ask('ログアウトしますか?\nこの端末のデータも、サーバーのデータもそのまま残ります。', { okLabel: 'ログアウト' }))) return;
+    await client.logout();
+    syncMeta = { lastSyncedAt: null, dirty: false };
+    writeSyncMeta();
+    setSyncStatus('idle');
+    toast('ログアウトしました');
+    renderMenu();
+  });
+
   // ---------- 起動 ----------
 
   // 日付が変わったとき(開きっぱなしでも)表示を更新
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') render();
+    if (document.visibilityState !== 'visible') return;
+    render();
+    syncNow();
   });
+  window.addEventListener('online', () => syncNow());
 
   resetForm();
   show('home');
+  syncNow();
 
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
