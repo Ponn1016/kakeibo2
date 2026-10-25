@@ -6,6 +6,6 @@
  * どちらかが空のあいだは、同期なしでこの端末だけに保存する。
  */
 window.KAKEIBO_SUPABASE = {
-  url: '',
-  key: ''
+  url: 'https://pdmrdzhljxpdkkbgofvx.supabase.co',
+  key: 'sb_publishable_W1wlDVbYDZmhwRFG0nJPHg_Wz98s37x'
 };
