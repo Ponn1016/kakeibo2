@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ade3cf">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="家計簿">
+  <title>家計簿</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="appbar">
+    <div class="appbar-inner">
+      <div class="appbar-side"></div>
+      <div class="appbar-center" id="appbar-center"></div>
+      <div class="appbar-side right">
+        <button type="button" class="round-btn" id="appbar-action" hidden></button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- ホーム -->
+    <section id="view-home" class="view" hidden></section>
+
+    <!-- 入力 -->
+    <section id="view-input" class="view" hidden>
+      <div class="form-row">
+        <div class="row-label">日付</div>
+        <button type="button" class="chev" id="date-prev" aria-label="前の日"></button>
+        <label class="pill date-pill">
+          <span id="date-text"></span>
+          <input type="date" id="date-input" aria-label="日付を選ぶ">
+        </label>
+        <button type="button" class="chev" id="date-next" aria-label="次の日"></button>
+      </div>
+      <div class="form-row">
+        <label class="row-label" for="memo">メモ</label>
+        <input type="text" id="memo" class="plain-input" placeholder="未入力" maxlength="60" autocomplete="off">
+      </div>
+      <div class="form-row" id="income-mode-row">
+        <div class="row-label">入力</div>
+        <div class="seg seg-inline" id="income-mode">
+          <button type="button" data-mode="hourly">時給×時間</button>
+          <button type="button" data-mode="amount">金額</button>
+        </div>
+      </div>
+      <div class="hourly" id="hourly-block"></div>
+      <div class="form-row">
+        <label class="row-label" for="amount" id="amount-label">支出</label>
+        <input type="text" id="amount" class="pill amount-input" inputmode="numeric" placeholder="0" autocomplete="off">
+        <span class="unit">円</span>
+      </div>
+      <div class="form-row method-row" id="method-row">
+        <div class="row-label">支払</div>
+        <div class="methods" id="methods"></div>
+      </div>
+      <div class="wallet-info" id="wallet-info" hidden></div>
+      <p class="hint" id="suggest-hint"></p>
+      <div class="section-label">カテゴリー</div>
+      <div class="categories" id="categories"></div>
+    </section>
+
+    <!-- カレンダー -->
+    <section id="view-calendar" class="view" hidden>
+      <div class="search-box" id="search-box" hidden>
+        <input type="search" id="search-input" placeholder="メモ・カテゴリーで検索" autocomplete="off">
+      </div>
+      <div id="cal-body">
+        <div class="month-row">
+          <button type="button" class="chev" id="cal-prev" aria-label="前の月"></button>
+          <div class="pill month-pill" id="cal-title"></div>
+          <button type="button" class="chev" id="cal-next" aria-label="次の月"></button>
+        </div>
+        <div class="cal bleed" id="cal"></div>
+        <div class="totals" id="cal-totals"></div>
+      </div>
+      <div class="day-list bleed" id="cal-list"></div>
+    </section>
+
+    <!-- レポート -->
+    <section id="view-report" class="view" hidden></section>
+
+    <!-- メニュー(設定) -->
+    <section id="view-menu" class="view" hidden></section>
+  </main>
+
+  <div class="submit-bar" id="submit-bar" hidden>
+    <button type="button" class="trash-btn" id="delete-btn" aria-label="この記録を削除" hidden></button>
+    <button type="button" class="submit-btn" id="save-btn">支出を入力する</button>
+  </div>
+
+  <nav class="tabbar" id="tabbar">
+    <button type="button" data-view="home"></button>
+    <button type="button" data-view="input"></button>
+    <button type="button" data-view="calendar"></button>
+    <button type="button" data-view="report"></button>
+    <button type="button" data-view="menu"></button>
+  </nav>
+
+  <div class="modal" id="modal" hidden>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="modal-msg">
+      <p id="modal-msg"></p>
+      <input type="text" id="modal-input" inputmode="numeric" autocomplete="off" aria-label="金額" hidden>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="modal-cancel">キャンセル</button>
+        <button type="button" class="btn primary" id="modal-ok">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="js/logic.js"></script>
+  <script src="js/icons.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
