@@ -30,7 +30,7 @@
 ## Supabase(同期)の設定
 
 1. Supabase でプロジェクトを作る(Data API はオン、「Automatically expose new tables」はオフ、「Enable automatic RLS」はオン)
-2. SQL Editor で [`supabase/schema.sql`](supabase/schema.sql) を実行する
+2. SQL Editor で [`supabase/schema.sql`](supabase/schema.sql) を実行する(何度実行しても安全。実行前に「destructive operations」の注意が出るが、消すのは鍵のルールの入れ直しだけでデータは消さない)
 3. Authentication → Users で自分のアカウントを作り(Auto Confirm)、新規登録(Allow new users to sign up)をオフにする
 4. [`js/config.js`](js/config.js) に Project URL と Publishable key(または anon key)を書く。**Secret key / service_role key は書かない**
 
