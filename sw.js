@@ -1,6 +1,6 @@
 // アプリ本体をキャッシュしてオフラインでも動くようにする。
 // ファイルを更新したら CACHE のバージョンを上げること。
-const CACHE = 'kakeibo2-v4';
+const CACHE = 'kakeibo2-v5';
 const ASSETS = [
   './',
   './index.html',
@@ -29,11 +29,17 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-// ネットワーク優先、オフライン時はキャッシュ
+// ネットワーク優先、オフライン時はキャッシュ。
+// ブラウザの HTTP キャッシュ(GitHub Pages は 10 分)を使わず毎回サーバーに確認して、更新がすぐ届くようにする
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET' || new URL(e.request.url).origin !== location.origin) return;
+  // ページ遷移のリクエストは設定を変えて作り直せないので、URL から作る
+  const fresh =
+    e.request.mode === 'navigate'
+      ? new Request(e.request.url, { cache: 'no-cache', credentials: 'same-origin' })
+      : new Request(e.request, { cache: 'no-cache' });
   e.respondWith(
-    fetch(e.request)
+    fetch(fresh)
       .then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(e.request, copy));
