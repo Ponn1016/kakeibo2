@@ -474,21 +474,21 @@
     return bal;
   }
 
-  // 時給×時間の合計。rows = [{ rate, hours }]
-  function hourlyTotal(rows) {
-    return Math.round((rows || []).reduce((s, r) => s + Number(r.rate) * (Number(r.hours) || 0), 0));
+  /*
+   * 時給×時間。row = { rate, minutes }(以前の記録は { rate, hours } の小数時間)
+   * 時給ごとの金額を1円単位に四捨五入し、合計はその和にする(画面の小計と合計が一致するように)
+   */
+  function workMinutes(row) {
+    if (row.minutes != null) return Number(row.minutes) || 0;
+    return Math.round((Number(row.hours) || 0) * 60);
   }
 
-  // "7.5" / "7:30" / "7時間30分" などを時間(小数)にする
-  function parseHours(text) {
-    const s = String(text == null ? '' : text)
-      .replace(/[０-９．：]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
-      .trim();
-    if (!s) return 0;
-    const m = s.match(/^(\d+)\s*(?::|時間)\s*(\d+)\s*分?$/);
-    if (m) return Number(m[1]) + Number(m[2]) / 60;
-    const n = Number(s.replace(/時間$/, ''));
-    return Number.isFinite(n) && n >= 0 ? n : 0;
+  function hourlyAmount(row) {
+    return Math.round((Number(row.rate) * workMinutes(row)) / 60);
+  }
+
+  function hourlyTotal(rows) {
+    return (rows || []).reduce((s, r) => s + hourlyAmount(r), 0);
   }
 
   function formatMD(s) {
@@ -521,8 +521,9 @@
     dailyTotals,
     suggestPayment,
     walletBalance,
+    workMinutes,
+    hourlyAmount,
     hourlyTotal,
-    parseHours,
     formatMD
   };
 

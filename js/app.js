@@ -62,9 +62,9 @@
     const t = L.today();
     const monthStart = t.slice(0, 8) + '01';
     const shift = [
-      { rate: 1830, hours: 48 },
-      { rate: 1530, hours: 20 },
-      { rate: 1280, hours: 16 }
+      { rate: 1830, minutes: 48 * 60 },
+      { rate: 1530, minutes: 20 * 60 + 30 },
+      { rate: 1280, minutes: 16 * 60 + 15 }
     ];
     const rows = [
       [monthStart, 'income', L.hourlyTotal(shift), 'salary', 'cash', '先月分', shift],
@@ -344,7 +344,7 @@
     if (!b || b.dataset.type === form.type) return;
     form.type = b.dataset.type;
     form.category = null;
-    form.hours = {};
+    form.work = {};
     renderAppbar();
     renderInput();
   });
@@ -436,14 +436,21 @@
       .join('');
   }
 
+  // 「7時間30分」の形
+  function durationText(minutes) {
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return (h ? h + '時間' : '') + (m || !h ? m + '分' : '');
+  }
+
   function hoursText(hours) {
-    return (hours || []).map((h) => num(h.rate) + '円×' + Math.round(h.hours * 100) / 100 + 'h').join(' + ');
+    return (hours || []).map((h) => num(h.rate) + '円×' + durationText(L.workMinutes(h))).join(' + ');
   }
 
   // ---------- 入力 ----------
 
-  // hours: 時給ごとの入力中の時間 { "1830": "7.5", ... }
-  const form = { editingId: null, type: 'expense', date: L.today(), amount: '', category: null, method: 'cash', memo: '', hours: {}, incomeMode: 'hourly' };
+  // work: 時給ごとの入力中の時間と分 { "1830": { h: "7", m: "30" }, ... }
+  const form = { editingId: null, type: 'expense', date: L.today(), amount: '', category: null, method: 'cash', memo: '', work: {}, incomeMode: 'hourly' };
   let methodTouched = false;
   let returnView = 'home'; // 編集を終えたときに戻る画面
 
@@ -454,7 +461,7 @@
     form.amount = '';
     form.category = null;
     form.memo = '';
-    form.hours = {};
+    form.work = {};
     form.incomeMode = state.settings.incomeMode || 'hourly';
     methodTouched = false;
   }
@@ -471,7 +478,12 @@
       category: tx.category,
       method: tx.method || 'cash',
       memo: tx.memo || '',
-      hours: Object.fromEntries((tx.hours || []).map((h) => [String(h.rate), String(Math.round(h.hours * 100) / 100)])),
+      work: Object.fromEntries(
+        (tx.hours || []).map((h) => {
+          const min = L.workMinutes(h);
+          return [String(h.rate), { h: min >= 60 ? String(Math.floor(min / 60)) : '', m: min % 60 ? String(min % 60) : '' }];
+        })
+      ),
       incomeMode: tx.hours && tx.hours.length ? 'hourly' : 'amount'
     });
     methodTouched = true;
@@ -515,16 +527,22 @@
   // 設定の時給 + 編集中の記録にだけある時給
   function hourlyRates() {
     const rates = (state.settings.hourlyRates || []).map(Number).filter((r) => r > 0);
-    Object.keys(form.hours).forEach((r) => {
+    Object.keys(form.work).forEach((r) => {
       if (!rates.includes(Number(r))) rates.push(Number(r));
     });
     return rates;
   }
 
+  // 入力欄の「時間」「分」から勤務時間(分)を出す
+  function enteredMinutes(rate) {
+    const w = form.work[rate];
+    return w ? (Number(w.h) || 0) * 60 + (Number(w.m) || 0) : 0;
+  }
+
   function hourlyRows() {
     return hourlyRates()
-      .map((rate) => ({ rate, hours: L.parseHours(form.hours[rate]) }))
-      .filter((r) => r.hours > 0);
+      .map((rate) => ({ rate, minutes: enteredMinutes(rate) }))
+      .filter((r) => r.minutes > 0);
   }
 
   function renderHourly() {
@@ -534,10 +552,13 @@
           .map(
             (rate) => `<div class="hourly-row">
               <span class="rate">${num(rate)}円</span><span class="x">×</span>
-              <input type="text" class="pill hours-input" id="hours-${rate}" data-rate="${rate}" inputmode="decimal" placeholder="0" value="${esc(form.hours[rate] || '')}" autocomplete="off" aria-label="${num(rate)}円の時間">
-              <span class="h">時間</span><span class="subtotal" data-subtotal="${rate}"></span></div>`
+              <input type="text" class="pill hours-input" id="hours-${rate}" data-rate="${rate}" data-part="h" inputmode="numeric" maxlength="3" placeholder="0" value="${esc((form.work[rate] || {}).h || '')}" autocomplete="off" aria-label="${num(rate)}円の時間">
+              <span class="h">時間</span>
+              <input type="text" class="pill hours-input" id="mins-${rate}" data-rate="${rate}" data-part="m" inputmode="numeric" maxlength="2" placeholder="0" value="${esc((form.work[rate] || {}).m || '')}" autocomplete="off" aria-label="${num(rate)}円の分">
+              <span class="h">分</span>
+              <span class="subtotal" data-subtotal="${rate}"></span></div>`
           )
-          .join('') + '<p class="hint">7.5 や 7:30 のように入力できます。合計が収入の金額になります。</p>'
+          .join('') + '<p class="hint">時給ごとに時間と分を入れると、合計が収入の金額になります。端数は1円単位に四捨五入します。</p>'
       : '<p class="hint">メニューで時給を登録してください。</p>';
     updateHourly();
   }
@@ -545,8 +566,8 @@
   function updateHourly() {
     hourlyRates().forEach((rate) => {
       const el = document.querySelector(`[data-subtotal="${rate}"]`);
-      const h = L.parseHours(form.hours[rate]);
-      if (el) el.textContent = h ? en(L.hourlyTotal([{ rate, hours: h }])) : '';
+      const min = enteredMinutes(rate);
+      if (el) el.textContent = min ? en(L.hourlyAmount({ rate, minutes: min })) : '';
     });
     const total = L.hourlyTotal(hourlyRows());
     form.amount = total ? String(total) : '';
@@ -556,9 +577,15 @@
   }
 
   $('#hourly-block').addEventListener('input', (e) => {
-    const rate = e.target.dataset.rate;
+    const { rate, part } = e.target.dataset;
     if (!rate) return;
-    form.hours[rate] = e.target.value;
+    let v = e.target.value.replace(/[^\d]/g, '').slice(0, part === 'm' ? 2 : 3);
+    if (part === 'm' && Number(v) > 59) {
+      v = '59';
+      toast('分は 0〜59 で入力してください');
+    }
+    e.target.value = v;
+    form.work[rate] = { ...(form.work[rate] || {}), [part]: v };
     updateHourly();
   });
 
@@ -572,7 +599,7 @@
       // 時給で入力するときは給与を選ぶ
       if (state.categories.income.some((c) => c.id === 'salary' && !c.archived)) form.category = 'salary';
     } else {
-      form.hours = {};
+      form.work = {};
     }
     renderInput();
   });
@@ -740,7 +767,7 @@
     // 日付とカテゴリーはそのまま、続けて入力できるようにする
     form.amount = '';
     form.memo = '';
-    form.hours = {};
+    form.work = {};
     methodTouched = false;
     $('#amount').blur();
     renderInput();
