@@ -126,15 +126,16 @@ test('金額0の定期収入は数えない', () => {
   assert.equal(L.nextIncomeDate([{ ...salary, amount: 0 }], '2026-10-01'), null);
 });
 
-test('時給×時間', () => {
+test('時給×時間(分単位、時給ごとに1円単位で四捨五入)', () => {
+  assert.equal(L.hourlyAmount({ rate: 1830, minutes: 7 * 60 + 30 }), 13725);
+  assert.equal(L.hourlyAmount({ rate: 1530, minutes: 7 }), 179); // 178.5 → 179
+  assert.equal(L.hourlyAmount({ rate: 1280, minutes: 1 }), 21); // 21.33… → 21
+  assert.equal(L.hourlyAmount({ rate: 1380, minutes: 20 }), 460);
+  assert.equal(L.hourlyTotal([{ rate: 1530, minutes: 7 }, { rate: 1280, minutes: 1 }]), 179 + 21);
+  // 以前の記録(小数の時間)もそのまま計算できる
+  assert.equal(L.workMinutes({ rate: 1830, hours: 7.5 }), 450);
   assert.equal(L.hourlyTotal([{ rate: 1830, hours: 5 }, { rate: 1280, hours: 2.5 }]), 9150 + 3200);
-  assert.equal(L.hourlyTotal([{ rate: 1380, hours: 1 / 3 }]), 460);
-  assert.equal(L.parseHours('7.5'), 7.5);
-  assert.equal(L.parseHours('7:30'), 7.5);
-  assert.equal(L.parseHours('７．５'), 7.5);
-  assert.equal(L.parseHours('3時間15分'), 3.25);
-  assert.equal(L.parseHours(''), 0);
-  assert.equal(L.parseHours('abc'), 0);
+  assert.equal(L.hourlyTotal([]), 0);
 });
 
 test('チャージは収入にも支出にも数えず、残高だけ増やす', () => {
