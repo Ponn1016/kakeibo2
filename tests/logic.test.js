@@ -154,3 +154,41 @@ test('チャージは収入にも支出にも数えず、残高だけ増やす',
   assert.equal(L.walletBalance(s, { id: 'paypay' }), 500);
   assert.equal(L.walletBalance(s, { id: 'paypay', balanceAdjust: 300 }), 800);
 });
+
+test('開始時の残高と繰越', () => {
+  const s = state({
+    settings: { savingsGoal: 10000, basis: 'accrual', opening: { date: '2026-10-25', cash: 200000, unpaidCards: 50000 } },
+    incomes: [],
+    transactions: [
+      { id: 1, type: 'expense', date: '2026-10-20', amount: 3000, method: 'cash' }, // 開始前(残高に含まれている)
+      { id: 2, type: 'expense', date: '2026-10-20', amount: 4000, method: 'a' }, // 開始前のカード(未払いカード代に含まれている)
+      { id: 3, type: 'income', date: '2026-10-26', amount: 10000, method: 'cash' },
+      { id: 4, type: 'expense', date: '2026-10-27', amount: 5000, method: 'a' }
+    ]
+  });
+  const oct = L.monthSummary(s, '2026-10', '2026-10-27');
+  assert.equal(oct.carry, 150000);
+  assert.equal(oct.income, 10000);
+  assert.equal(oct.spent, 5000);
+  assert.equal(oct.remaining, 150000 + 10000 - 10000 - 5000);
+  assert.equal(oct.openingStartsThisMonth, true);
+
+  const nov = L.monthSummary(s, '2026-11', '2026-11-01');
+  assert.equal(nov.carry, 155000);
+  assert.equal(nov.remaining, 155000 - 10000);
+  assert.equal(nov.openingStartsThisMonth, false);
+
+  // 開始より前の月は従来どおり(繰越なし)
+  const sep = L.monthSummary(s, '2026-09', '2026-10-27');
+  assert.equal(sep.hasOpening, false);
+  assert.equal(sep.carry, 0);
+
+  // 引落月で計上:開始後のカード利用(10/27 → 12/10 引落)は12月に数え、開始前の利用は数えない
+  s.settings.basis = 'cash';
+  assert.equal(L.monthSummary(s, '2026-10', '2026-10-27').spent, 0);
+  assert.equal(L.monthSummary(s, '2026-11', '2026-11-01').carry, 160000);
+  const dec = L.monthSummary(s, '2026-12', '2026-12-01');
+  assert.equal(dec.cardWithdrawn, 5000);
+  assert.equal(dec.carry, 160000);
+  assert.equal(dec.remaining, 160000 - 10000 - 5000);
+});

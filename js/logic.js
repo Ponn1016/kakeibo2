@@ -249,11 +249,12 @@
     return card ? withdrawalDateFor(card, tx.date) : tx.date;
   }
 
-  // 指定月に引き落とされるカード利用額(カードごと)
-  function cardWithdrawalsInMonth(state, mk) {
+  // 指定月に引き落とされるカード利用額(カードごと)。since を渡すと、その日以降の利用分だけ
+  function cardWithdrawalsInMonth(state, mk, since) {
     const map = {};
     (state.transactions || []).forEach((tx) => {
       if (tx.type !== 'expense' || !isCard(state, tx.method)) return;
+      if (since && tx.date < since) return;
       const card = findCard(state, tx.method);
       const wd = withdrawalDateFor(card, tx.date);
       if (monthKey(wd) !== mk) return;
@@ -265,35 +266,73 @@
     return Object.values(map).sort((a, b) => a.date.localeCompare(b.date));
   }
 
+  function nextMonthKey(mk) {
+    const [y, m] = mk.split('-').map(Number);
+    return ymd(y, m + 1, 1).slice(0, 7);
+  }
+
   /*
-   * 月の可処分を計算する。
-   * basis = 'accrual'(使った月に計上) / 'cash'(現金は使った月、カードは引落月に計上)
+   * 月の収入と支出。since(開始日)を渡すと、それより前の記録は数えない
+   * (開始時の残高にすでに含まれているため)
+   */
+  function monthFlows(state, mk, since) {
+    const basis = (state.settings || {}).basis || 'accrual';
+    const counts = (d) => !since || d >= since;
+    const txs = (state.transactions || []).filter((t) => monthKey(t.date) === mk && counts(t.date));
+
+    const recurring = recurringIncomesInMonth(state.incomes, state.incomeOverrides, mk).filter((r) => counts(r.date));
+    const recurringTotal = recurring.reduce((s, r) => s + r.amount, 0);
+    const extraIncome = txs.filter((t) => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0);
+
+    const expensesInMonth = txs.filter((t) => t.type === 'expense');
+    const cashSpent = expensesInMonth.filter((t) => !isCard(state, t.method)).reduce((s, t) => s + Number(t.amount), 0);
+    const cardUsed = expensesInMonth.filter((t) => isCard(state, t.method)).reduce((s, t) => s + Number(t.amount), 0);
+    const cardWithdrawn = cardWithdrawalsInMonth(state, mk, since).reduce((s, w) => s + w.amount, 0);
+
+    return {
+      basis,
+      recurring,
+      recurringTotal,
+      extraIncome,
+      income: recurringTotal + extraIncome,
+      expensesInMonth,
+      cashSpent,
+      cardUsed,
+      cardWithdrawn,
+      spent: basis === 'cash' ? cashSpent + cardWithdrawn : cashSpent + cardUsed
+    };
+  }
+
+  /*
+   * 繰越。settings.opening = { date, cash(手元のお金), unpaidCards(未払いのカード代) }
+   * 開始日の月からは「開始時の残高 − 未払いカード代 + 先月末までの(収入 − 支出)」を繰り越す。
+   * 開始時の残高が未設定、または開始日より前の月なら null(その月だけで計算する)
+   */
+  function carryOver(state, mk) {
+    const op = (state.settings || {}).opening;
+    if (!op || !op.date || monthKey(op.date) > mk) return null;
+    let carry = (Number(op.cash) || 0) - (Number(op.unpaidCards) || 0);
+    for (let cur = monthKey(op.date); cur < mk; cur = nextMonthKey(cur)) {
+      const f = monthFlows(state, cur, op.date);
+      carry += f.income - f.spent;
+    }
+    return { carry, opening: op, startsThisMonth: monthKey(op.date) === mk };
+  }
+
+  /*
+   * 月の「あと使えるお金」を計算する。
+   * あと使えるお金 = 繰越 + その月の収入 − その月の支出 − 最低限残しておく額(settings.savingsGoal)
+   * basis = 'accrual'(カードは使った月に計上) / 'cash'(カードは引落月に計上)
    */
   function monthSummary(state, mk, todayStr) {
     const settings = state.settings || {};
-    const basis = settings.basis || 'accrual';
-    const txs = state.transactions || [];
-
-    const recurring = recurringIncomesInMonth(state.incomes, state.incomeOverrides, mk);
-    const recurringTotal = recurring.reduce((s, r) => s + r.amount, 0);
-    const extraIncome = txs
-      .filter((t) => t.type === 'income' && monthKey(t.date) === mk)
-      .reduce((s, t) => s + Number(t.amount), 0);
-    const income = recurringTotal + extraIncome;
-
-    const expensesInMonth = txs.filter((t) => t.type === 'expense' && monthKey(t.date) === mk);
-    const cashSpent = expensesInMonth
-      .filter((t) => !isCard(state, t.method))
-      .reduce((s, t) => s + Number(t.amount), 0);
-    const cardUsed = expensesInMonth
-      .filter((t) => isCard(state, t.method))
-      .reduce((s, t) => s + Number(t.amount), 0);
+    const co = carryOver(state, mk);
+    const f = monthFlows(state, mk, co ? co.opening.date : null);
+    const { basis, recurring, recurringTotal, extraIncome, income, expensesInMonth, cashSpent, cardUsed, cardWithdrawn, spent } = f;
     const withdrawals = cardWithdrawalsInMonth(state, mk);
-    const cardWithdrawn = withdrawals.reduce((s, w) => s + w.amount, 0);
-
-    const spent = basis === 'cash' ? cashSpent + cardWithdrawn : cashSpent + cardUsed;
+    const carry = co ? co.carry : 0;
     const savings = Number(settings.savingsGoal) || 0;
-    const budget = income - savings;
+    const budget = carry + income - savings;
     const remaining = budget - spent;
 
     // 1日あたりの目安(今日を含む残り日数で割る)
@@ -322,6 +361,10 @@
 
     return {
       basis,
+      carry,
+      hasOpening: !!co,
+      openingStartsThisMonth: !!(co && co.startsThisMonth),
+      opening: co ? co.opening : null,
       income,
       recurring,
       recurringTotal,
@@ -518,6 +561,7 @@
     cashOutDate,
     cardWithdrawalsInMonth,
     monthSummary,
+    carryOver,
     dailyTotals,
     suggestPayment,
     walletBalance,

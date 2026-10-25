@@ -455,6 +455,7 @@ main { max-width: 600px; margin: 0 auto; padding: 0 16px 16px; }
   background: var(--text-strong);
   border-radius: 1px;
 }
+.budget-line { margin: 8px 0 0; font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; }
 .meter-labels { display: flex; justify-content: space-between; font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; }
 
 .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
