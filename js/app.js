@@ -6,6 +6,7 @@
   const I = window.KakeiboIcons;
   const STORAGE_KEY = 'kakeibo2:v2';
   const WEEK = ['日', '月', '火', '水', '木', '金', '土'];
+  const MAX_AMOUNT = 999999; // 1回の入出金は6桁まで
 
   // ---------- データ ----------
 
@@ -241,8 +242,16 @@
     });
   }
 
+  // 入力された文字から金額の数字だけを取り出す。6桁を超えた分は捨てて知らせる
+  function amountDigits(text) {
+    const d = String(text).replace(/[^\d]/g, '').replace(/^0+/, '');
+    if (d.length <= String(MAX_AMOUNT).length) return d;
+    toast('金額は ' + num(MAX_AMOUNT) + '円 までです');
+    return d.slice(0, String(MAX_AMOUNT).length);
+  }
+
   $('#modal-input').addEventListener('input', (e) => {
-    const d = e.target.value.replace(/[^\d]/g, '').slice(0, 9);
+    const d = amountDigits(e.target.value);
     e.target.value = d ? num(d) : '';
   });
 
@@ -542,6 +551,7 @@
     const total = L.hourlyTotal(hourlyRows());
     form.amount = total ? String(total) : '';
     $('#amount').value = total ? num(total) : '';
+    $('#amount').classList.toggle('over', total > MAX_AMOUNT);
     renderSubmit();
   }
 
@@ -571,7 +581,7 @@
     const btn = $('#save-btn');
     btn.textContent = form.editingId ? '変更する' : form.type === 'expense' ? '支出を入力する' : '収入を入力する';
     const ws = walletShortfall();
-    btn.classList.toggle('disabled', !Number(form.amount) || !!(ws && ws.short > 0));
+    btn.classList.toggle('disabled', !Number(form.amount) || Number(form.amount) > MAX_AMOUNT || !!(ws && ws.short > 0));
     $('#delete-btn').hidden = !form.editingId;
   }
 
@@ -608,7 +618,7 @@
     const editing = form.editingId && state.transactions.find((t) => t.id === form.editingId);
     const available = bal + (editing && editing.method === w.id && editing.type === 'expense' ? Number(editing.amount) : 0);
     const short = (Number(form.amount) || 0) - available;
-    return { w, bal, short: Math.max(0, short), suggest: short > 0 ? Math.ceil(short / 1000) * 1000 : 1000 };
+    return { w, bal, short: Math.max(0, short), suggest: short > 0 ? Math.min(MAX_AMOUNT, Math.ceil(short / 1000) * 1000) : 1000 };
   }
 
   // コード決済を選んだときの残高とチャージ
@@ -655,7 +665,7 @@
 
   $('#amount').addEventListener('input', (e) => {
     if (isHourly()) return;
-    const digits = e.target.value.replace(/[^\d]/g, '').replace(/^0+/, '').slice(0, 9);
+    const digits = amountDigits(e.target.value);
     form.amount = digits;
     e.target.value = digits ? num(digits) : '';
     renderSubmit();
@@ -688,6 +698,10 @@
     if (!amount || amount <= 0) {
       toast(isHourly() ? '時間を入力してください' : '金額を入力してください');
       if (!isHourly()) $('#amount').focus();
+      return;
+    }
+    if (amount > MAX_AMOUNT) {
+      toast('合計が ' + num(MAX_AMOUNT) + '円 を超えています。時間を見直してください');
       return;
     }
     // コード決済の残高が足りないときは、先にチャージを記録してもらう
@@ -1112,7 +1126,7 @@
             (inc) => `<div class="sub-card" data-income="${esc(inc.id)}">
             <div class="form-grid">
               <label>名前<input type="text" data-f="name" value="${esc(inc.name)}" maxlength="20"></label>
-              <label>金額<input type="number" data-f="amount" inputmode="numeric" min="0" value="${Number(inc.amount) || 0}"></label>
+              <label>金額<input type="number" data-f="amount" inputmode="numeric" min="0" max="${MAX_AMOUNT}" value="${Number(inc.amount) || 0}"></label>
               <label>毎月<select data-f="day">${dayOptions(inc.day)}</select></label>
               <label>休日の場合<select data-f="holidayAdjust">${adjustOptions(inc.holidayAdjust)}</select></label>
             </div>
@@ -1191,7 +1205,8 @@
       cardEl.querySelector('.preview').textContent = cardPreview(c);
     } else if (incEl && f) {
       const inc = state.incomes.find((x) => x.id === incEl.dataset.income);
-      inc[f] = f === 'name' ? val || '収入' : val;
+      if (f === 'amount' && val > MAX_AMOUNT) toast('金額は ' + num(MAX_AMOUNT) + '円 までです');
+      inc[f] = f === 'name' ? val || '収入' : f === 'amount' ? Math.min(val, MAX_AMOUNT) : val;
       rerender = true;
     } else if (catEl && t.dataset.cf) {
       const c = state.categories[catEditType].find((x) => x.id === catEl.dataset.catId);
