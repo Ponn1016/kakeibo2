@@ -1,6 +1,6 @@
 # kakeibo2
 
-個人用の家計簿アプリ(PWA)。HTML / CSS / JavaScript だけで動き、サーバーは不要です。データは端末のブラウザ(localStorage)に保存されます。
+個人用の家計簿アプリ(PWA)。HTML / CSS / JavaScript だけで動き、GitHub Pages で公開します。データは端末(localStorage)に保存し、ログインすると Supabase にも同期します。
 
 ## 機能
 
@@ -13,7 +13,8 @@
 - **支払手段の提案**:入力画面で、支払いを最も先にできるカードに「おすすめ」を表示。上限超過や次の収入前の引落は優先度を下げ、使えるお金を超える支出は現金を提案
 - **カレンダー**:日別の収入(青)・支出(赤)、カード引落のマーク、日付ごとの明細、検索
 - **レポート**:使えるお金の内訳、カテゴリー別・支払方法別の支出、引落・入金予定
-- **メニュー**:時給、カード、毎月決まった額の収入(固定給がある場合のみ)、貯金目標、カテゴリー、データの書き出し・読み込み
+- **同期**:メニューからログインすると、変更のたびにサーバー(Supabase)へ保存。開いたとき・アプリに戻ったときにサーバーの変更を取り込む。オフラインでも使え、つながったときに同期
+- **メニュー**:同期(ログイン)、時給、カード、毎月決まった額の収入(固定給がある場合のみ)、貯金目標、カテゴリー、データの書き出し・読み込み
 
 ### 使えるお金の計算
 
@@ -24,6 +25,15 @@
 ```
 
 カード払いを「使った月」と「引き落とされる月」のどちらで支出に数えるかはメニューで選べます(初期値は使った月)。
+
+## Supabase(同期)の設定
+
+1. Supabase でプロジェクトを作る(Data API はオン、「Automatically expose new tables」はオフ、「Enable automatic RLS」はオン)
+2. SQL Editor で [`supabase/schema.sql`](supabase/schema.sql) を実行する
+3. Authentication → Users で自分のアカウントを作り(Auto Confirm)、新規登録(Allow new users to sign up)をオフにする
+4. [`js/config.js`](js/config.js) に Project URL と Publishable key(または anon key)を書く。**Secret key / service_role key は書かない**
+
+`js/config.js` が空のあいだは、同期なしで端末だけに保存します。
 
 ## GitHub Pages で公開する
 
@@ -46,6 +56,9 @@ node --test tests/*.test.js   # 計算ロジックのテスト
 | `index.html` | 画面の骨組み |
 | `css/style.css` | スタイル |
 | `js/icons.js` | カテゴリーと画面操作の線画アイコン |
-| `js/logic.js` | 締め日・引落日・祝日・可処分・支払提案の計算(DOM 非依存) |
+| `js/logic.js` | 締め日・引落日・祝日・使えるお金・支払提案・時給・残高の計算(DOM 非依存) |
 | `js/app.js` | 画面の描画と操作、データ保存 |
+| `js/sync.js` | Supabase へのログインと同期 |
+| `js/config.js` | Supabase の接続先(公開してよい値だけ) |
+| `supabase/schema.sql` | Supabase に作るテーブルと鍵(RLS) |
 | `sw.js` / `manifest.webmanifest` | PWA(オフライン対応・ホーム画面追加) |
