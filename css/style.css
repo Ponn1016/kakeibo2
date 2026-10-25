@@ -245,6 +245,7 @@ main { max-width: 600px; margin: 0 auto; padding: 0 16px 16px; }
 .hourly-row .subtotal { text-align: right; font-size: 13px; color: var(--income); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hourly .hint { margin: 4px 0 8px; }
 .amount-input.computed { color: var(--income); background: var(--bg); box-shadow: none; }
+.amount-input.computed.over { color: var(--danger); }
 
 .section-label { font-weight: 700; font-size: 17px; margin: 22px 0 14px; }
 .categories { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
@@ -618,7 +619,7 @@ main { max-width: 600px; margin: 0 auto; padding: 0 16px 16px; }
   opacity: 0;
   pointer-events: none;
   transition: opacity .2s, transform .2s;
-  z-index: 40;
+  z-index: 60;
   max-width: calc(100% - 32px);
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
