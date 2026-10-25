@@ -27,7 +27,9 @@
       income: [
         { id: 'salary', name: '給与', icon: 'wallet', color: '#e2a72a' },
         { id: 'extra', name: '臨時収入', icon: 'sparkle', color: '#49b5e6' },
-        { id: 'inc-other', name: 'その他', icon: 'coins', color: '#a08fd0' }
+        { id: 'inc-other', name: 'その他', icon: 'coins', color: '#a08fd0' },
+        // 貯蓄(B銀行など)への入金。使えるお金には入れず、貯蓄の合計にだけ足す
+        { id: 'savings', name: '貯蓄', icon: 'bank', color: '#5a8fd8' }
       ]
     };
   }
@@ -115,9 +117,15 @@
         settings: { ...base.settings, ...(data.settings || {}) },
         categories: {
           expense: Array.isArray(cats.expense) && typeof cats.expense[0] === 'object' ? cats.expense : base.categories.expense,
-          income: Array.isArray(cats.income) && typeof cats.income[0] === 'object' ? cats.income : base.categories.income
+          income: withSavingsCategory(Array.isArray(cats.income) && typeof cats.income[0] === 'object' ? cats.income : base.categories.income)
         }
       };
+  }
+
+  // 以前のデータにも「貯蓄」のカテゴリーを足す
+  function withSavingsCategory(list) {
+    if (list.some((c) => c.id === 'savings')) return list;
+    return list.concat(defaultCategories().income.filter((c) => c.id === 'savings'));
   }
 
   function load() {
@@ -378,15 +386,13 @@
       ? '<p class="demo-note">お試し版です。サンプルの記録が入っています。メニューの「全データ削除」で空にできます。</p>'
       : '';
 
-    if (s.income <= 0 && !s.hasOpening) {
+    if (s.income <= 0 && s.carry === 0) {
       el.innerHTML = `
         <section class="focus">
           <div class="focus-label">${m}月 あと使えるお金</div>
-          <p class="focus-empty">メニューで開始時の残高を入れるか、<br>今月の収入を記録すると、<br>あといくら使えるかがここに出ます。</p>
-          <div class="btn-row" style="justify-content:center">
-            <button type="button" class="btn" data-go="menu">開始時の残高を入れる</button>
-            <button type="button" class="btn primary" data-add-income>給与を記録する</button>
-          </div>
+          <p class="focus-empty">収入を記録すると、<br>あといくら使えるかがここに出ます。</p>
+          <button type="button" class="btn primary" data-add-income>収入を記録する</button>
+          <p class="small muted">使い始めは、今の手元のお金(メイン口座 + PayPay + 財布の現金)を収入の「その他」で記録してください。</p>
           ${s.spent ? `<p class="small muted">今月使ったお金:${en(s.spent)}</p>` : ''}
         </section>${demo}`;
       return;
@@ -410,12 +416,8 @@
           <span class="expected" style="left:${expectedPct.toFixed(1)}%" title="今日までの目安"></span>
         </div>
         <div class="meter-labels"><span>使った ${en(s.spent)}</span><span>予算 ${en(budget)}</span></div>
-        <p class="budget-line">予算 = ${s.hasOpening ? (s.openingStartsThisMonth ? '開始時の残高 ' : '繰越 ') + en(s.carry) + ' + ' : ''}今月の収入 ${en(s.income)}${s.savings ? ' − 残しておく ' + en(s.savings) : ''}</p>
+        <p class="budget-line">予算 = ${s.carry ? '先月からの繰越 ' + en(s.carry) + ' + ' : ''}今月の収入 ${en(s.income)}${s.savings ? ' − 残しておく ' + en(s.savings) : ''}</p>
       </section>
-      <div class="tiles">
-        <div class="tile"><div class="label">1日あたり</div><div class="val">${en(s.perDay)}</div><div class="note">月末まで残り${s.daysLeft}日</div></div>
-        <div class="tile"><div class="label">今日あと</div><div class="val ${s.todayAllowance < 0 ? 'expense' : ''}">${en(s.todayAllowance)}</div><div class="note">今日使った ${en(s.spentToday)}</div></div>
-      </div>
       <button type="button" class="link-row" data-go="report">内訳・引落予定を見る${I.ui('chevR', 18, 1.8)}</button>
       ${demo}`;
   }
@@ -883,6 +885,7 @@
         .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
         .forEach((tx) => {
           if (tx.type === 'charge') return items.push(chargeRow(tx));
+          if (L.isSavings(tx)) return items.push(txRow(tx));
           net += tx.type === 'income' ? Number(tx.amount) : -Number(tx.amount);
           counted++;
           items.push(txRow(tx));
@@ -904,6 +907,7 @@
     if (card) sub.push(card.name + '・' + mdw(L.withdrawalDateFor(card, tx.date)) + '引落');
     else if (tx.type === 'expense') sub.push(methodName(tx.method));
     if (tx.hours && tx.hours.length) sub.push(hoursText(tx.hours));
+    if (L.isSavings(tx)) sub.push('使えるお金には含めません');
     return `<li class="tap" data-edit="${esc(tx.id)}">
       <div class="ic-wrap">${catIcon(cat, 34)}</div>
       <div class="grow"><div class="name">${esc(cat.name)}${tx.memo ? `<small>(${esc(tx.memo)})</small>` : ''}</div>
@@ -1032,13 +1036,7 @@
       <div class="card">
         <h3>使えるお金の内訳(${s.basis === 'cash' ? 'カードは引落月で計上' : 'カードは使った月で計上'})</h3>
         <div class="rows">
-          ${s.hasOpening
-            ? s.openingStartsThisMonth
-              ? `<div>開始時の残高(${mdw(s.opening.date)})</div><div>${en(s.carry)}</div>
-                 <div class="sub">手元のお金</div><div class="sub">${en(s.opening.cash)}</div>
-                 <div class="sub">未払いのカード代</div><div class="sub">-${en(s.opening.unpaidCards)}</div>`
-              : `<div>先月からの繰越</div><div>${en(s.carry)}</div>`
-            : ''}
+          ${s.carry ? `<div>先月からの繰越</div><div>${en(s.carry)}</div>` : ''}
           <div>収入</div><div class="income">${en(s.income)}</div>
           ${s.recurring.map((r) => `<div class="sub">${esc(r.name)} ${mdw(r.date)}</div><div class="sub">${en(r.amount)}</div>`).join('')}
           ${s.savings ? `<div>残しておく額</div><div>-${en(s.savings)}</div>` : ''}
@@ -1051,6 +1049,13 @@
         </div>
       </div>
       <div class="card"><h3>カテゴリー別の支出</h3>${catRows || '<p class="small muted" style="margin:0">支出の記録がありません</p>'}</div>
+      <div class="card"><h3>貯蓄</h3>
+        <div class="rows">
+          <div>貯蓄の合計</div><div class="total" style="border:none;padding:0">${en(L.savingsBalance(state))}</div>
+          <div class="sub">この月の入金</div><div class="sub">${en(txs.filter(L.isSavings).reduce((a, t) => a + Number(t.amount), 0))}</div>
+        </div>
+        <p class="small muted" style="margin:8px 0 0">収入の「貯蓄」で記録した分です。使えるお金には入りません。</p>
+      </div>
       <div class="card"><h3>支払方法別</h3><ul class="list">${methodRows || '<li class="small muted">記録がありません</li>'}</ul>
         ${activeWallets().map((w) => `<p class="small muted" style="margin:8px 0 0">${esc(w.name)}の今の残高:${en(L.walletBalance(state, w))}</p>`).join('')}</div>
       <div class="card"><h3>この月の引落・入金予定</h3><ul class="list">${scheduleItems(s, L.today()) || '<li class="small muted">ありません</li>'}</ul></div>`;
@@ -1098,7 +1103,6 @@
     const st = state.settings;
     const cats = state.categories[catEditType].filter((c) => !c.archived);
     const rates = st.hourlyRates || [];
-    const op = st.opening || {};
     $('#view-menu').innerHTML = `
       ${syncCard()}
       <div class="card">
@@ -1181,17 +1185,21 @@
       <div class="card">
         <h3>使えるお金の計算</h3>
         <div class="stack">
-          <p class="small muted" style="margin:0">開始時の残高を入れると「手元のお金 + 稼いだお金 − 使ったお金」で計算し、残りは翌月に繰り越します。開始日より前の記録は、開始時の残高に含まれているものとして数えません。</p>
-          <label>開始日<input type="date" id="set-open-date" value="${esc(op.date || '')}"></label>
-          <label>開始日の手元のお金(メイン口座 + PayPay + 財布の現金。貯蓄用の口座は入れない)<input type="number" id="set-open-cash" inputmode="numeric" min="0" value="${Number(op.cash) || 0}"></label>
-          <label>開始日にまだ引き落とされていないカード代(確定分 + 未確定分)<input type="number" id="set-open-unpaid" inputmode="numeric" min="0" value="${Number(op.unpaidCards) || 0}"></label>
-          <p class="small" style="margin:0">${op.date ? `開始時の残高:<b>${en((Number(op.cash) || 0) - (Number(op.unpaidCards) || 0))}</b>(${mdw(op.date)})` : '開始日を入れると繰越が有効になります'}</p>
+          <p class="small muted" style="margin:0">あと使えるお金 = 先月からの繰越 + 今月の収入 − 今月の支出 − 最低限残しておく額。使わなかった分は翌月に繰り越します。</p>
           <label>最低限残しておく額(あと使えるお金から先に除く)<input type="number" id="set-savings" inputmode="numeric" min="0" value="${Number(st.savingsGoal) || 0}"></label>
           <label>カード払いの計上月<select id="set-basis">
             <option value="accrual" ${st.basis !== 'cash' ? 'selected' : ''}>使った月に計上(使いすぎ防止向き)</option>
             <option value="cash" ${st.basis === 'cash' ? 'selected' : ''}>引き落とされる月に計上(口座残高向き)</option>
           </select></label>
         </div>
+      </div>
+
+      <div class="card">
+        <h3>貯蓄</h3>
+        <div class="stack">
+          <label>貯蓄の今の残高(B銀行など)<input type="number" id="set-savings-balance" inputmode="numeric" min="0" value="${L.savingsBalance(state)}"></label>
+        </div>
+        <p class="small muted">B銀行への入金は、収入の「貯蓄」で記録すると、使えるお金に入れずにここへ足されます。実際の残高とずれたら、ここを直してください。</p>
       </div>
 
       <div class="card" id="cat-settings">
@@ -1263,15 +1271,9 @@
       findWallet(t.dataset.wallet).name = t.value.trim() || 'コード決済';
     } else if (t.dataset.rateIdx !== undefined) {
       state.settings.hourlyRates[Number(t.dataset.rateIdx)] = Math.max(0, Math.round(Number(t.value) || 0));
-    } else if (t.id === 'set-open-date' || t.id === 'set-open-cash' || t.id === 'set-open-unpaid') {
-      const op = { ...(state.settings.opening || {}) };
-      if (t.id === 'set-open-date') op.date = t.value;
-      else {
-        op[t.id === 'set-open-cash' ? 'cash' : 'unpaidCards'] = Math.max(0, Math.round(Number(t.value) || 0));
-        if (!op.date) op.date = L.today();
-      }
-      state.settings.opening = op;
-      rerender = true;
+    } else if (t.id === 'set-savings-balance') {
+      const adjust = Number(state.settings.savingsAdjust) || 0;
+      state.settings.savingsAdjust = adjust + (Math.round(Number(t.value) || 0) - L.savingsBalance(state));
     } else if (t.id === 'set-savings') {
       state.settings.savingsGoal = Math.max(0, Number(t.value) || 0);
     } else if (t.id === 'set-basis') {
