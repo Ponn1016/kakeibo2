@@ -1,6 +1,6 @@
 // アプリ本体をキャッシュしてオフラインでも動くようにする。
 // ファイルを更新したら CACHE のバージョンを上げること。
-const CACHE = 'kakeibo2-v10';
+const CACHE = 'kakeibo2-v11';
 const ASSETS = [
   './',
   './index.html',
