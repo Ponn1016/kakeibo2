@@ -498,7 +498,6 @@
 
   function renderInput() {
     $('#date-text').textContent = longDate(form.date);
-    $('#date-input').value = form.date;
     $('#memo').value = form.memo;
     $('#amount').value = form.amount ? num(form.amount) : '';
     $('#amount-label').textContent = form.type === 'expense' ? '支出' : '収入';
@@ -517,7 +516,7 @@
     else $('#wallet-info').hidden = true;
 
     const hourly = isHourly();
-    $('#income-mode-row').hidden = isExpense;
+    $('#income-mode-row').hidden = !isSalary();
     document.querySelectorAll('#income-mode button').forEach((b) => b.classList.toggle('active', b.dataset.mode === form.incomeMode));
     $('#hourly-block').hidden = !hourly;
     $('#amount').readOnly = hourly;
@@ -526,8 +525,13 @@
     renderSubmit();
   }
 
+  // 「時給×時間/金額」を選べるのは収入の「給与」のときだけ
+  function isSalary() {
+    return form.type === 'income' && form.category === 'salary';
+  }
+
   function isHourly() {
-    return form.type === 'income' && form.incomeMode === 'hourly';
+    return isSalary() && form.incomeMode === 'hourly';
   }
 
   // 設定の時給 + 編集中の記録にだけある時給
@@ -692,7 +696,66 @@
   }
   $('#date-prev').addEventListener('click', () => setDate(L.addDays(form.date, -1)));
   $('#date-next').addEventListener('click', () => setDate(L.addDays(form.date, 1)));
-  $('#date-input').addEventListener('change', (e) => setDate(e.target.value));
+  $('#date-text').addEventListener('click', () => openDatePicker());
+
+  // ---------- 日付を選ぶカレンダー ----------
+
+  let pickerMonth = L.monthKey(L.today());
+
+  function openDatePicker() {
+    pickerMonth = L.monthKey(form.date);
+    renderDatePicker();
+    $('#date-picker').hidden = false;
+  }
+
+  function closeDatePicker() {
+    $('#date-picker').hidden = true;
+  }
+
+  function renderDatePicker() {
+    const [y, m] = pickerMonth.split('-').map(Number);
+    const firstDow = new Date(y, m - 1, 1).getDay();
+    const n = L.daysInMonth(y, m);
+    const t = L.today();
+    let days = '';
+    for (let i = 0; i < firstDow; i++) days += '<span></span>';
+    for (let d = 1; d <= n; d++) {
+      const ds = L.ymd(y, m, d);
+      const w = L.weekday(ds);
+      const cls = ['pick-day'];
+      if (w === 0 || L.holidayName(ds)) cls.push('sun');
+      if (w === 6) cls.push('sat');
+      if (ds === t) cls.push('today');
+      if (ds === form.date) cls.push('selected');
+      days += `<button type="button" class="${cls.join(' ')}" data-pick="${ds}">${d}</button>`;
+    }
+    $('#date-picker .picker-box').innerHTML = `
+      <div class="picker-head">
+        <button type="button" class="chev" data-pick-move="-1" aria-label="前の月">${I.ui('chevL', 22, 1.6)}</button>
+        <div class="picker-title">${y}年${m}月</div>
+        <button type="button" class="chev" data-pick-move="1" aria-label="次の月">${I.ui('chevR', 22, 1.6)}</button>
+      </div>
+      <div class="picker-grid picker-week">${WEEK.map((w, i) => `<span class="${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}</span>`).join('')}</div>
+      <div class="picker-grid">${days}</div>
+      <div class="modal-actions">
+        <button type="button" class="btn" data-pick-today>今日</button>
+        <button type="button" class="btn" data-pick-close>閉じる</button>
+      </div>`;
+  }
+
+  $('#date-picker').addEventListener('click', (e) => {
+    if (e.target === $('#date-picker') || e.target.closest('[data-pick-close]')) return closeDatePicker();
+    const move = e.target.closest('[data-pick-move]');
+    if (move) {
+      pickerMonth = shiftMonthKey(pickerMonth, Number(move.dataset.pickMove));
+      return renderDatePicker();
+    }
+    const pick = e.target.closest('[data-pick]');
+    const today = e.target.closest('[data-pick-today]');
+    if (!pick && !today) return;
+    closeDatePicker();
+    setDate(pick ? pick.dataset.pick : L.today());
+  });
 
   $('#memo').addEventListener('input', (e) => (form.memo = e.target.value));
 
@@ -713,6 +776,8 @@
     const b = e.target.closest('[data-cat]');
     if (!b) return;
     form.category = b.dataset.cat;
+    // 収入は、給与かどうかで入力欄が変わるので描き直す
+    if (form.type === 'income') return renderInput();
     document.querySelectorAll('#categories .cat').forEach((x) => x.classList.toggle('active', x === b));
   });
 
