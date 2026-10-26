@@ -33,10 +33,7 @@
       <div class="form-row">
         <div class="row-label">日付</div>
         <button type="button" class="chev" id="date-prev" aria-label="前の日"></button>
-        <label class="pill date-pill">
-          <span id="date-text"></span>
-          <input type="date" id="date-input" aria-label="日付を選ぶ">
-        </label>
+        <button type="button" class="pill date-pill" id="date-text" aria-haspopup="dialog" aria-label="日付を選ぶ"></button>
         <button type="button" class="chev" id="date-next" aria-label="次の日"></button>
       </div>
       <div class="form-row">
@@ -112,6 +109,10 @@
         <button type="button" class="btn primary" id="modal-ok">OK</button>
       </div>
     </div>
+  </div>
+
+  <div class="modal" id="date-picker" hidden>
+    <div class="picker-box" role="dialog" aria-modal="true" aria-label="日付を選ぶ"></div>
   </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
