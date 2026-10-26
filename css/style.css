@@ -222,6 +222,17 @@ main { max-width: 600px; margin: 0 auto; padding: 0 16px 16px; }
 .amount-input:focus { box-shadow: inset 0 0 0 2px var(--mint-border); }
 .unit { width: 36px; text-align: center; font-size: 18px; flex: none; }
 
+.presets { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 0 12px 82px; border-bottom: 1px solid var(--line); }
+.presets[hidden] { display: none; }
+.preset {
+  border: 1px solid var(--mint-border);
+  background: var(--bg);
+  border-radius: 999px;
+  padding: 7px 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.preset.active { background: var(--mint-soft); border-color: var(--mint-strong); box-shadow: inset 0 0 0 1px var(--mint-strong); }
 .method-row { min-height: 70px; padding: 10px 0 12px; flex-wrap: wrap; row-gap: 12px; }
 .method-row .methods { flex-basis: 100%; }
 .form-row[hidden] { display: none; }
