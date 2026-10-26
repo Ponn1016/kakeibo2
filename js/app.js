@@ -26,6 +26,7 @@
       ],
       income: [
         { id: 'salary', name: '給与', icon: 'wallet', color: '#e2a72a' },
+        { id: 'transport-inc', name: '交通費', icon: 'train', color: '#9a6a4a' },
         { id: 'extra', name: '臨時収入', icon: 'sparkle', color: '#49b5e6' },
         { id: 'inc-other', name: 'その他', icon: 'coins', color: '#a08fd0' },
         // 貯蓄(B銀行など)への入金。使えるお金には入れず、貯蓄の合計にだけ足す
@@ -111,15 +112,32 @@
       (data.cards || []).forEach((c) => {
         if (rename[c.id] && c.name === rename[c.id][0]) c.name = rename[c.id][1];
       });
+      const settings = { ...base.settings, ...(data.settings || {}) };
+      let income = withSavingsCategory(Array.isArray(cats.income) && typeof cats.income[0] === 'object' ? cats.income : base.categories.income);
+      // 収入の「交通費」は、以前のデータにも1回だけ足す(あとで消したら足し直さない)
+      if (!settings.addedIncomeTransport) {
+        income = withCategoryAfter(income, 'transport-inc', 'salary');
+        settings.addedIncomeTransport = true;
+      }
       return {
         ...base,
         ...data,
-        settings: { ...base.settings, ...(data.settings || {}) },
+        settings,
         categories: {
           expense: Array.isArray(cats.expense) && typeof cats.expense[0] === 'object' ? cats.expense : base.categories.expense,
-          income: withSavingsCategory(Array.isArray(cats.income) && typeof cats.income[0] === 'object' ? cats.income : base.categories.income)
+          income
         }
       };
+  }
+
+  // 初期のカテゴリー id を、afterId の次(なければ最後)に足す
+  function withCategoryAfter(list, id, afterId) {
+    if (list.some((c) => c.id === id)) return list;
+    const cat = defaultCategories().income.find((c) => c.id === id);
+    const i = list.findIndex((c) => c.id === afterId);
+    const copy = list.slice();
+    copy.splice(i < 0 ? copy.length : i + 1, 0, cat);
+    return copy;
   }
 
   // 以前のデータにも「貯蓄」のカテゴリーを足す
