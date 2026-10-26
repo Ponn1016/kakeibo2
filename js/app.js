@@ -42,6 +42,7 @@
         savingsGoal: 0,
         basis: 'accrual',
         hourlyRates: [1830, 1530, 1380, 1280],
+        transportPresets: [1372, 1116], // 収入「交通費」でボタンから選べる金額
         incomeMode: 'hourly' // 収入の入力方法:'hourly'(時給×時間)/ 'amount'(金額)
       },
       cards: [
@@ -540,8 +541,29 @@
     $('#amount').readOnly = hourly;
     $('#amount').classList.toggle('computed', hourly);
     if (hourly) renderHourly();
+    renderPresets();
     renderSubmit();
   }
+
+  // 収入「交通費」のときに出す、よく使う金額のボタン
+  function renderPresets() {
+    const el = $('#preset-row');
+    const presets = (state.settings.transportPresets || []).map(Number).filter((v) => v > 0);
+    el.hidden = !(form.type === 'income' && form.category === 'transport-inc' && presets.length);
+    if (el.hidden) return;
+    el.innerHTML = presets
+      .map((v) => `<button type="button" class="preset ${Number(form.amount) === v ? 'active' : ''}" data-preset="${v}">${num(v)}円</button>`)
+      .join('');
+  }
+
+  $('#preset-row').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-preset]');
+    if (!b) return;
+    form.amount = b.dataset.preset;
+    $('#amount').value = num(form.amount);
+    renderPresets();
+    renderSubmit();
+  });
 
   // 「時給×時間/金額」を選べるのは収入の「給与」のときだけ
   function isSalary() {
@@ -782,6 +804,7 @@
     const digits = amountDigits(e.target.value);
     form.amount = digits;
     e.target.value = digits ? num(digits) : '';
+    renderPresets();
     renderSubmit();
     // 金額によって上限超過の判定が変わるので提案を更新
     if (form.type === 'expense') renderMethods();
@@ -1204,6 +1227,21 @@
       </div>
 
       <div class="card">
+        <h3>交通費の定額</h3>
+        ${(st.transportPresets || [])
+          .map(
+            (v, i) => `<div class="rate-edit">
+            <input type="number" id="preset-${i}" data-preset-idx="${i}" inputmode="numeric" min="0" value="${Number(v) || 0}" aria-label="交通費${i + 1}">
+            <span>円</span>
+            <button type="button" class="mini-btn danger" data-del-preset="${i}" aria-label="この金額を削除">${I.ui('trash', 18, 1.6)}</button>
+          </div>`
+          )
+          .join('')}
+        <div class="btn-row" style="margin-top:10px"><button type="button" class="btn" id="add-preset">+ 金額を追加</button></div>
+        <p class="small muted">「入力 → 収入 → 交通費」で、ここの金額をボタンで選べます。</p>
+      </div>
+
+      <div class="card">
         <h3>コード決済・電子マネー</h3>
         ${activeWallets()
           .map(
@@ -1352,6 +1390,8 @@
       w.balanceAdjust = (Number(w.balanceAdjust) || 0) + (Math.round(Number(t.value) || 0) - L.walletBalance(state, w));
     } else if (t.dataset.wallet) {
       findWallet(t.dataset.wallet).name = t.value.trim() || 'コード決済';
+    } else if (t.dataset.presetIdx !== undefined) {
+      state.settings.transportPresets[Number(t.dataset.presetIdx)] = Math.min(MAX_AMOUNT, Math.max(0, Math.round(Number(t.value) || 0)));
     } else if (t.dataset.rateIdx !== undefined) {
       state.settings.hourlyRates[Number(t.dataset.rateIdx)] = Math.max(0, Math.round(Number(t.value) || 0));
     } else if (t.id === 'set-savings-balance') {
@@ -1405,6 +1445,10 @@
       if (!(await ask(used ? 'この支払方法の記録は残したまま、選択肢から外します。' : 'この支払方法を削除しますか?', { okLabel: '削除する', danger: true }))) return;
       if (used) findWallet(id).archived = true;
       else state.wallets = state.wallets.filter((w) => w.id !== id);
+    } else if (t.id === 'add-preset') {
+      state.settings.transportPresets = (state.settings.transportPresets || []).concat([0]);
+    } else if (t.dataset.delPreset !== undefined) {
+      state.settings.transportPresets.splice(Number(t.dataset.delPreset), 1);
     } else if (t.id === 'add-rate') {
       state.settings.hourlyRates = (state.settings.hourlyRates || []).concat([0]);
     } else if (t.dataset.delRate !== undefined) {
