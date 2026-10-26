@@ -517,7 +517,7 @@
     else $('#wallet-info').hidden = true;
 
     const hourly = isHourly();
-    $('#income-mode-row').hidden = isExpense;
+    $('#income-mode-row').hidden = !isSalary();
     document.querySelectorAll('#income-mode button').forEach((b) => b.classList.toggle('active', b.dataset.mode === form.incomeMode));
     $('#hourly-block').hidden = !hourly;
     $('#amount').readOnly = hourly;
@@ -526,8 +526,13 @@
     renderSubmit();
   }
 
+  // 「時給×時間/金額」を選べるのは収入の「給与」のときだけ
+  function isSalary() {
+    return form.type === 'income' && form.category === 'salary';
+  }
+
   function isHourly() {
-    return form.type === 'income' && form.incomeMode === 'hourly';
+    return isSalary() && form.incomeMode === 'hourly';
   }
 
   // 設定の時給 + 編集中の記録にだけある時給
@@ -713,6 +718,8 @@
     const b = e.target.closest('[data-cat]');
     if (!b) return;
     form.category = b.dataset.cat;
+    // 収入は、給与かどうかで入力欄が変わるので描き直す
+    if (form.type === 'income') return renderInput();
     document.querySelectorAll('#categories .cat').forEach((x) => x.classList.toggle('active', x === b));
   });
 
