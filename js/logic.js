@@ -324,6 +324,52 @@
   }
 
   /*
+   * メイン口座の見通し。settings.bank = { balance, asOf(残高を入れた日), updatedAt(入れた時刻) }
+   * 出せるお金 = 残高 − 残高を入れた日以降のカード引落 − 残高を入れた後に記録したチャージ − 最低限残しておく額
+   * 残高を入れた日と同じ日の引落は、まだ落ちていないものとして引く(少なめに見積もる)
+   */
+  function bankOutlook(state) {
+    const bank = (state.settings || {}).bank;
+    if (!bank || !bank.asOf) return null;
+    const balance = Number(bank.balance) || 0;
+    const reserve = Number((state.settings || {}).savingsGoal) || 0;
+
+    const map = {};
+    (state.transactions || []).forEach((tx) => {
+      if (tx.type !== 'expense' || !isCard(state, tx.method)) return;
+      const card = findCard(state, tx.method);
+      const wd = withdrawalDateFor(card, tx.date);
+      if (wd < bank.asOf) return;
+      const key = card.id + '|' + wd;
+      if (!map[key]) map[key] = { date: wd, name: card.name, amount: 0 };
+      map[key].amount += Number(tx.amount);
+    });
+    const withdrawals = Object.values(map).sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
+    const pendingWithdrawals = withdrawals.reduce((s, w) => s + w.amount, 0);
+
+    const chargesSince = (state.transactions || [])
+      .filter((t) => t.type === 'charge' && (!bank.updatedAt || String(t.createdAt) > bank.updatedAt))
+      .reduce((s, t) => s + Number(t.amount), 0);
+
+    // 引落日ごとの残高の推移
+    let running = balance - chargesSince;
+    const timeline = withdrawals.map((w) => {
+      running -= w.amount;
+      return { ...w, balanceAfter: running };
+    });
+
+    return {
+      balance,
+      asOf: bank.asOf,
+      withdrawals: timeline,
+      pendingWithdrawals,
+      chargesSince,
+      reserve,
+      available: balance - pendingWithdrawals - chargesSince - reserve
+    };
+  }
+
+  /*
    * 月の「あと使えるお金」を計算する。
    * あと使えるお金 = 繰越 + その月の収入 − その月の支出 − 最低限残しておく額(settings.savingsGoal)
    * 貯蓄への入金は収入に数えない
@@ -551,6 +597,7 @@
     monthSummary,
     carryOver,
     savingsBalance,
+    bankOutlook,
     isSavings,
     dailyTotals,
     suggestPayment,

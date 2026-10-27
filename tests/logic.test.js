@@ -181,3 +181,31 @@ test('使い始めの残高と未払いカード代を記録して繰り越す�
   assert.equal(L.savingsBalance(s), 303000);
   assert.equal(L.dailyTotals(s, '2026-10')['2026-10-27'].income, 0);
 });
+test('メイン口座の見通し', () => {
+  const s = state({
+    settings: { savingsGoal: 10000, bank: { balance: 200000, asOf: '2026-10-27', updatedAt: '2026-10-27T09:00:00.000Z' } },
+    transactions: [
+      { id: 1, type: 'expense', date: '2026-10-01', amount: 30000, method: 'a' }, // 締め 10/15 → 11/10 引落
+      { id: 2, type: 'expense', date: '2026-10-20', amount: 8000, method: 'a' }, // 締め 11/15 → 12/10 引落
+      { id: 3, type: 'expense', date: '2026-09-01', amount: 5000, method: 'a' }, // 10/13 引落(残高に反映済み)
+      { id: 4, type: 'expense', date: '2026-10-25', amount: 2000, method: 'cash' }, // 現金は関係なし
+      { id: 5, type: 'charge', date: '2026-10-27', amount: 1000, method: 'paypay', createdAt: '2026-10-27T08:00:00.000Z' }, // 残高を入れる前
+      { id: 6, type: 'charge', date: '2026-10-27', amount: 3000, method: 'paypay', createdAt: '2026-10-27T10:00:00.000Z' } // 残高を入れた後
+    ]
+  });
+  const b = L.bankOutlook(s);
+  assert.equal(b.pendingWithdrawals, 38000);
+  assert.equal(b.chargesSince, 3000);
+  assert.equal(b.available, 200000 - 38000 - 3000 - 10000);
+  assert.deepEqual(b.withdrawals.map((w) => [w.date, w.amount, w.balanceAfter]), [
+    ['2026-11-10', 30000, 167000],
+    ['2026-12-10', 8000, 159000]
+  ]);
+  // 残高を入れた日と同じ日の引落は、まだ落ちていないものとして引く
+  s.settings.bank.asOf = '2026-11-10';
+  assert.equal(L.bankOutlook(s).pendingWithdrawals, 38000);
+  s.settings.bank.asOf = '2026-11-11';
+  assert.equal(L.bankOutlook(s).pendingWithdrawals, 8000);
+  // 残高が未入力なら null
+  assert.equal(L.bankOutlook(state()), null);
+});

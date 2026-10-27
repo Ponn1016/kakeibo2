@@ -47,7 +47,7 @@
       },
       cards: [
         { id: 'cardA', name: 'JALカード', closingDay: 15, paymentMonthOffset: 1, paymentDay: 10, holidayAdjust: 'next', monthlyLimit: 0 },
-        { id: 'cardB', name: '三井住友NL', closingDay: 5, paymentMonthOffset: 0, paymentDay: 26, holidayAdjust: 'next', monthlyLimit: 0 }
+        { id: 'cardB', name: '三井住友NL', closingDay: 31, paymentMonthOffset: 1, paymentDay: 26, holidayAdjust: 'next', monthlyLimit: 0 }
       ],
       // コード決済・電子マネー。口座からチャージして使うので、使った日に支払ったものとして扱う
       wallets: [{ id: 'paypay', name: 'PayPay' }],
@@ -247,6 +247,7 @@
     $('#modal-cancel').textContent = o.cancelLabel || 'キャンセル';
     ok.classList.toggle('danger-fill', !!o.danger);
     input.hidden = !o.withInput;
+    modalMaxDigits = o.maxDigits || String(MAX_AMOUNT).length;
     input.value = o.value != null ? num(o.value) : '';
     modal.hidden = false;
     if (o.withInput) input.focus();
@@ -269,16 +270,19 @@
     });
   }
 
-  // 入力された文字から金額の数字だけを取り出す。6桁を超えた分は捨てて知らせる
-  function amountDigits(text) {
+  // 入力された文字から金額の数字だけを取り出す。上限の桁数(入出金は6桁)を超えた分は捨てて知らせる
+  function amountDigits(text, maxDigits) {
+    const max = maxDigits || String(MAX_AMOUNT).length;
     const d = String(text).replace(/[^\d]/g, '').replace(/^0+/, '');
-    if (d.length <= String(MAX_AMOUNT).length) return d;
-    toast('金額は ' + num(MAX_AMOUNT) + '円 までです');
-    return d.slice(0, String(MAX_AMOUNT).length);
+    if (d.length <= max) return d;
+    toast(max === String(MAX_AMOUNT).length ? '金額は ' + num(MAX_AMOUNT) + '円 までです' : '金額が大きすぎます');
+    return d.slice(0, max);
   }
 
+  let modalMaxDigits = String(MAX_AMOUNT).length; // 確認ダイアログの金額欄の桁数(口座残高は 9 桁まで)
+
   $('#modal-input').addEventListener('input', (e) => {
-    const d = amountDigits(e.target.value);
+    const d = amountDigits(e.target.value, modalMaxDigits);
     e.target.value = d ? num(d) : '';
   });
 
@@ -413,7 +417,7 @@
           <button type="button" class="btn primary" data-add-income>収入を記録する</button>
           <p class="small muted">使い始めは、今の手元のお金(メイン口座 + PayPay + 財布の現金)を収入の「その他」で記録してください。</p>
           ${s.spent ? `<p class="small muted">今月使ったお金:${en(s.spent)}</p>` : ''}
-        </section>${demo}`;
+        </section>${bankCard()}${demo}`;
       return;
     }
 
@@ -437,11 +441,40 @@
         <div class="meter-labels"><span>使った ${en(s.spent)}</span><span>予算 ${en(budget)}</span></div>
         <p class="budget-line">予算 = ${s.carry ? '先月からの繰越 ' + en(s.carry) + ' + ' : ''}今月の収入 ${en(s.income)}${s.savings ? ' − 残しておく ' + en(s.savings) : ''}</p>
       </section>
+      ${bankCard()}
       <button type="button" class="link-row" data-go="report">内訳・引落予定を見る${I.ui('chevR', 18, 1.8)}</button>
       ${demo}`;
   }
 
+  // メイン口座から出せるお金(残高 − 引落予定 − チャージ − 残しておく額)
+  function bankCard() {
+    const b = L.bankOutlook(state);
+    if (!b) {
+      return `<section class="bank-card">
+        <div class="bank-label">メイン口座から出せるお金</div>
+        <p class="small" style="margin:6px 0 10px">銀行アプリで見た残高を入れると、カードの引落予定を除いて、PayPay へのチャージや ATM で出していい額がわかります。</p>
+        <button type="button" class="btn small primary" data-bank-update>口座の残高を入れる</button>
+      </section>`;
+    }
+    return `<section class="bank-card">
+      <div class="bank-head"><span class="bank-label">メイン口座から出せるお金</span><button type="button" class="btn small" data-bank-update>残高を更新</button></div>
+      <div class="bank-big ${b.available < 0 ? 'minus' : ''}">${b.available < 0 ? '-' : ''}${num(Math.abs(b.available))}<span>円</span></div>
+      <p class="budget-line" style="text-align:left">残高 ${en(b.balance)}(${mdw(b.asOf)}時点)− 引落予定 ${en(b.pendingWithdrawals)}${b.chargesSince ? ' − チャージ ' + en(b.chargesSince) : ''}${b.reserve ? ' − 残しておく ' + en(b.reserve) : ''}</p>
+    </section>`;
+  }
+
+  async function updateBankBalance() {
+    const cur = (state.settings.bank || {}).balance;
+    const n = await ask('メイン口座の今の残高(銀行アプリで見た額)', { withInput: true, value: cur || '', okLabel: '更新する', maxDigits: 9 });
+    if (n === null) return;
+    state.settings.bank = { balance: n, asOf: L.today(), updatedAt: new Date().toISOString() };
+    save();
+    render();
+    toast('口座の残高を更新しました');
+  }
+
   $('#view-home').addEventListener('click', (e) => {
+    if (e.target.closest('[data-bank-update]')) return updateBankBalance();
     if (!e.target.closest('[data-add-income]')) return;
     resetForm();
     form.type = 'income';
@@ -1164,7 +1197,27 @@
       </div>
       <div class="card"><h3>支払方法別</h3><ul class="list">${methodRows || '<li class="small muted">記録がありません</li>'}</ul>
         ${activeWallets().map((w) => `<p class="small muted" style="margin:8px 0 0">${esc(w.name)}の今の残高:${en(L.walletBalance(state, w))}</p>`).join('')}</div>
-      <div class="card"><h3>この月の引落・入金予定</h3><ul class="list">${scheduleItems(s, L.today()) || '<li class="small muted">ありません</li>'}</ul></div>`;
+      <div class="card"><h3>この月の引落・入金予定</h3><ul class="list">${scheduleItems(s, L.today()) || '<li class="small muted">ありません</li>'}</ul></div>
+      ${bankReport()}`;
+  }
+
+  // 口座の見通し:引落日ごとの残高の推移
+  function bankReport() {
+    const b = L.bankOutlook(state);
+    if (!b) return '';
+    const rows = [`<li><div class="small" style="width:66px">${mdw(b.asOf)}</div><div class="grow">残高</div><div>${en(b.balance)}</div></li>`];
+    if (b.chargesSince) {
+      rows.push(`<li><div class="small" style="width:66px"></div><div class="grow">チャージ(残高を入れた後)</div><div class="expense">-${en(b.chargesSince)}</div></li>`);
+    }
+    b.withdrawals.forEach((w) =>
+      rows.push(`<li><div class="small" style="width:66px">${mdw(w.date)}</div><div class="grow">${esc(w.name)} 引落<div class="small muted">残高 ${en(w.balanceAfter)}</div></div><div class="expense">-${en(w.amount)}</div></li>`)
+    );
+    if (b.reserve) rows.push(`<li><div class="small" style="width:66px"></div><div class="grow">残しておく額</div><div>-${en(b.reserve)}</div></li>`);
+    return `<div class="card"><h3>メイン口座の見通し</h3>
+      <ul class="list">${rows.join('')}</ul>
+      <div class="rows" style="margin-top:6px"><div class="total">出せるお金</div><div class="total">${en(b.available)}</div></div>
+      <p class="small muted" style="margin:8px 0 0">引落予定は、カード払いで記録した分から計算しています。残高を入れた日の引落は、まだ落ちていないものとして引いています。</p>
+    </div>`;
   }
 
   $('#view-report').addEventListener('click', (e) => {
