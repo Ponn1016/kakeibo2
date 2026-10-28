@@ -477,6 +477,11 @@ main { max-width: 600px; margin: 0 auto; padding: 0 16px 16px; }
 }
 .focus-big span { font-size: .4em; margin-left: 4px; }
 .focus-big.minus { color: var(--danger); }
+.plan-line { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; margin: -4px 0 10px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.plan-line b { color: var(--text-strong); }
+.plan-line .held { color: var(--muted); background: var(--cream-2); border-radius: 999px; padding: 0 10px; }
+.plan-line.over { color: var(--warn); }
+.plan-line.over b { color: var(--warn); }
 .focus-empty { margin: 14px 0 16px; font-size: 15px; }
 .pace {
   display: inline-flex;
@@ -499,6 +504,15 @@ main { max-width: 600px; margin: 0 auto; padding: 0 16px 16px; }
   margin: 18px 0 6px;
 }
 .meter .used { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 6px; }
+/* 貯蓄に回したい分(右端からグレーの斜線) */
+.meter .plan {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 0 6px 6px 0;
+  background: repeating-linear-gradient(135deg, var(--beige) 0 4px, var(--cream-2) 4px 8px);
+}
 .meter .used.good { background: var(--mint-strong); }
 .meter .used.warn { background: var(--warn); }
 .meter .used.bad { background: var(--danger); }

@@ -40,6 +40,7 @@
       version: 2,
       settings: {
         savingsGoal: 0,
+        savingsPlan: 0, // 毎月貯蓄に回したい額。あと使えるお金からは引かず、ホームでグレーで見せる
         basis: 'accrual',
         hourlyRates: [1830, 1530, 1380, 1280],
         transportPresets: [1372, 1116], // 収入「交通費」でボタンから選べる金額
@@ -448,13 +449,25 @@
     if (s.remaining < 0) pace = { cls: 'bad', label: '予算オーバー', note: en(-s.remaining) + ' 使いすぎています' };
     else if (s.paceDiff >= 0) pace = { cls: 'good', label: 'ペース順調', note: '予定より ' + en(s.paceDiff) + ' 少なめ' };
     else pace = { cls: 'warn', label: '使いすぎ注意', note: '予定より ' + en(-s.paceDiff) + ' 多め' };
+    // 貯蓄に回したい分:あと使えるお金のうちこの額をグレーで見せる(計算からは引かない)
+    const plan = Math.max(0, Number(state.settings.savingsPlan) || 0);
+    const planPct = budget && plan ? Math.min(100, (plan / budget) * 100) : 0;
+    const held = Math.min(plan, Math.max(s.remaining, 0));
+    let planLine = '';
+    if (plan && s.remaining >= plan) {
+      planLine = `<div class="plan-line"><span>自由に使える <b>${en(s.remaining - plan)}</b></span><span class="held">貯蓄に回す分 ${en(plan)}</span></div>`;
+    } else if (plan) {
+      planLine = `<div class="plan-line over"><span>貯蓄に回したい ${en(plan)} のうち <b>${en(plan - held)}</b> に食い込んでいます</span></div>`;
+    }
 
     el.innerHTML = `
       <section class="focus">
         <div class="focus-label">${m}月 あと使えるお金</div>
         <div class="focus-big ${s.remaining < 0 ? 'minus' : ''}">${s.remaining < 0 ? '-' : ''}${num(Math.abs(s.remaining))}<span>円</span></div>
+        ${planLine}
         <div class="pace ${pace.cls}"><b>${pace.label}</b>${pace.note}</div>
-        <div class="meter" role="img" aria-label="予算${en(budget)}のうち${en(s.spent)}使用">
+        <div class="meter" role="img" aria-label="予算${en(budget)}のうち${en(s.spent)}使用${plan ? '、貯蓄に回す分' + en(plan) : ''}">
+          ${planPct ? `<span class="plan" style="width:${planPct.toFixed(1)}%"></span>` : ''}
           <span class="used ${pace.cls}" style="width:${usedPct.toFixed(1)}%"></span>
           <span class="expected" style="left:${expectedPct.toFixed(1)}%" title="今日までの目安"></span>
         </div>
@@ -1488,6 +1501,7 @@
         <div class="stack">
           <p class="small muted" style="margin:0">あと使えるお金 = 先月からの繰越 + 今月の収入 − 今月の支出 − 最低限残しておく額。使わなかった分は翌月に繰り越します。</p>
           <label>最低限残しておく額(あと使えるお金から先に除く)<input type="number" id="set-savings" inputmode="numeric" min="0" value="${Number(st.savingsGoal) || 0}"></label>
+          <label>毎月貯蓄に回したい額(引かずに、ホームでグレーで表示)<input type="number" id="set-savings-plan" inputmode="numeric" min="0" max="${MAX_AMOUNT}" value="${Number(st.savingsPlan) || 0}"></label>
           <p class="small muted" style="margin:0">メイン口座から出せるお金は、次の給料日の前日までに落ちるカード代だけを引きます。</p>
           <div class="form-grid">
             <label>メイン口座の給料日<select id="set-payday-day">${dayOptions(st.payday.day)}</select></label>
@@ -1601,6 +1615,8 @@
     } else if (t.id === 'set-savings-balance') {
       const adjust = Number(state.settings.savingsAdjust) || 0;
       state.settings.savingsAdjust = adjust + (Math.round(Number(t.value) || 0) - L.savingsBalance(state));
+    } else if (t.id === 'set-savings-plan') {
+      state.settings.savingsPlan = Math.min(MAX_AMOUNT, Math.max(0, Math.round(Number(t.value) || 0)));
     } else if (t.id === 'set-savings') {
       state.settings.savingsGoal = Math.max(0, Number(t.value) || 0);
     } else if (t.id === 'set-payday-day' || t.id === 'set-payday-adjust') {
