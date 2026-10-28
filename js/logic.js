@@ -324,6 +324,26 @@
   }
 
   /*
+   * ポイント還元(7%還元など)。tx.pointRate(%)が付いた支出の 金額 × 率 の1ポイント未満切り捨て(目安)
+   */
+  function txPoints(tx) {
+    if (tx.type !== 'expense' || !(Number(tx.pointRate) > 0)) return 0;
+    return Math.floor((Number(tx.amount) * Number(tx.pointRate)) / 100);
+  }
+
+  // 月(mk)のポイントと、これまでの合計
+  function pointsSummary(state, mk) {
+    const txs = (state.transactions || []).filter((t) => txPoints(t) > 0);
+    const inMonth = txs.filter((t) => monthKey(t.date) === mk);
+    return {
+      month: inMonth.reduce((s, t) => s + txPoints(t), 0),
+      monthCount: inMonth.length,
+      monthAmount: inMonth.reduce((s, t) => s + Number(t.amount), 0),
+      total: txs.reduce((s, t) => s + txPoints(t), 0)
+    };
+  }
+
+  /*
    * メイン口座の見通し。settings.bank = { balance, asOf(残高を入れた日), updatedAt(入れた時刻) }
    * 出せるお金 = 残高 − 残高を入れた日以降のカード引落 − 残高を入れた後に記録したチャージ − 最低限残しておく額
    * 残高を入れた日と同じ日の引落は、まだ落ちていないものとして引く(少なめに見積もる)
@@ -598,6 +618,8 @@
     carryOver,
     savingsBalance,
     bankOutlook,
+    txPoints,
+    pointsSummary,
     isSavings,
     dailyTotals,
     suggestPayment,

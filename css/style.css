@@ -267,6 +267,19 @@ main { max-width: 600px; margin: 0 auto; padding: 0 16px 16px; }
 .wallet-info .short { color: var(--warn); font-size: 12px; margin-left: 4px; }
 .wallet-info .btn { display: inline-flex; align-items: center; gap: 2px; }
 .modal-box p { white-space: pre-line; }
+.point-row { padding: 10px 0 0; }
+.point-row[hidden] { display: none; }
+.point-toggle {
+  border: 1px dashed var(--mint-strong);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.point-toggle.active { border-style: solid; background: var(--mint-soft); color: #2f8f6c; }
+.point-toggle b { margin-left: 4px; }
 .hint { font-size: 12px; color: var(--muted); margin: 8px 0 0; min-height: 1em; }
 .hint[hidden] { display: none; }
 

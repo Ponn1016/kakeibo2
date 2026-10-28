@@ -209,3 +209,22 @@ test('メイン口座の見通し', () => {
   // 残高が未入力なら null
   assert.equal(L.bankOutlook(state()), null);
 });
+
+test('ポイント還元(7%)', () => {
+  const s = state({
+    transactions: [
+      { id: 1, type: 'expense', date: '2026-10-10', amount: 1200, method: 'b', pointRate: 7 }, // 84P
+      { id: 2, type: 'expense', date: '2026-10-11', amount: 498, method: 'b', pointRate: 7 }, // 34.86 → 34P
+      { id: 3, type: 'expense', date: '2026-10-12', amount: 1000, method: 'b' }, // 対象外
+      { id: 4, type: 'expense', date: '2026-09-30', amount: 300, method: 'b', pointRate: 7 } // 21P(先月)
+    ]
+  });
+  assert.equal(L.txPoints(s.transactions[0]), 84);
+  assert.equal(L.txPoints(s.transactions[1]), 34);
+  assert.equal(L.txPoints(s.transactions[2]), 0);
+  assert.deepEqual(L.pointsSummary(s, '2026-10'), { month: 118, monthCount: 2, monthAmount: 1698, total: 139 });
+  // ポイントはあと使えるお金に影響しない
+  const withPoints = L.monthSummary(s, '2026-10', '2026-10-12').remaining;
+  s.transactions.forEach((t) => delete t.pointRate);
+  assert.equal(L.monthSummary(s, '2026-10', '2026-10-12').remaining, withPoints);
+});

@@ -43,6 +43,7 @@
         basis: 'accrual',
         hourlyRates: [1830, 1530, 1380, 1280],
         transportPresets: [1372, 1116], // 収入「交通費」でボタンから選べる金額
+        pointRate: 7, // カード払いで「還元の対象」にしたときの還元率(%)
         incomeMode: 'hourly' // 収入の入力方法:'hourly'(時給×時間)/ 'amount'(金額)
       },
       cards: [
@@ -508,7 +509,8 @@
   // ---------- 入力 ----------
 
   // work: 時給ごとの入力中の時間と分 { "1830": { h: "7", m: "30" }, ... }
-  const form = { editingId: null, type: 'expense', date: L.today(), amount: '', category: null, method: 'cash', memo: '', work: {}, incomeMode: 'hourly' };
+  // point: この支出をポイント還元(7%還元など)の対象にするか
+  const form = { editingId: null, type: 'expense', date: L.today(), amount: '', category: null, method: 'cash', memo: '', work: {}, incomeMode: 'hourly', point: false };
   let methodTouched = false;
   let returnView = 'home'; // 編集を終えたときに戻る画面
 
@@ -521,6 +523,7 @@
     form.memo = '';
     form.work = {};
     form.incomeMode = state.settings.incomeMode || 'hourly';
+    form.point = false;
     methodTouched = false;
   }
 
@@ -542,7 +545,8 @@
           return [String(h.rate), { h: min >= 60 ? String(Math.floor(min / 60)) : '', m: min % 60 ? String(min % 60) : '' }];
         })
       ),
-      incomeMode: tx.hours && tx.hours.length ? 'hourly' : 'amount'
+      incomeMode: tx.hours && tx.hours.length ? 'hourly' : 'amount',
+      point: Number(tx.pointRate) > 0
     });
     methodTouched = true;
     show('input');
@@ -565,7 +569,7 @@
     $('#method-row').hidden = !isExpense;
     $('#suggest-hint').hidden = !isExpense;
     if (isExpense) renderMethods();
-    else $('#wallet-info').hidden = true;
+    else $('#wallet-info').hidden = $('#point-row').hidden = true;
 
     const hourly = isHourly();
     $('#income-mode-row').hidden = !isSalary();
@@ -716,7 +720,29 @@
       .join('');
     $('#suggest-hint').textContent = sug.reason;
     renderWalletInfo();
+    renderPointToggle();
   }
+
+  function pointRate() {
+    return Number(state.settings.pointRate) || 0;
+  }
+
+  // カード払いのときに出す「○%還元の対象」ボタン。押すと金額 × 率のポイント(目安)を記録する
+  function renderPointToggle() {
+    const row = $('#point-row');
+    row.hidden = !(form.type === 'expense' && findCard(form.method) && pointRate() > 0);
+    if (row.hidden) return;
+    const btn = $('#point-toggle');
+    const pts = L.txPoints({ type: 'expense', amount: Number(form.amount) || 0, pointRate: pointRate() });
+    btn.classList.toggle('active', form.point);
+    btn.setAttribute('aria-pressed', String(form.point));
+    btn.innerHTML = `${form.point ? '✓ ' : ''}${pointRate()}%還元の対象${form.point && pts ? ` <b>+${num(pts)}P</b>` : ''}`;
+  }
+
+  $('#point-toggle').addEventListener('click', () => {
+    form.point = !form.point;
+    renderPointToggle();
+  });
 
   // コード決済を選んだときの残高とチャージ
   // コード決済を選んでいるとき、その残高と不足額。選んでいなければ null
@@ -895,9 +921,11 @@
       memo: form.memo.trim()
     };
     if (isHourly()) data.hours = hourlyRows();
+    if (data.type === 'expense' && findCard(data.method) && form.point && pointRate() > 0) data.pointRate = pointRate();
     if (form.editingId) {
       const tx = state.transactions.find((t) => t.id === form.editingId);
       delete tx.hours;
+      delete tx.pointRate;
       Object.assign(tx, data);
       save();
       toast('変更しました');
@@ -908,11 +936,13 @@
     state.transactions.push({ id: uid(), createdAt: new Date().toISOString(), ...data });
     save();
     const card = data.type === 'expense' ? findCard(data.method) : null;
-    toast(card ? `記録しました(${mdw(L.withdrawalDateFor(card, data.date))} 引落)` : '記録しました');
+    const pts = L.txPoints(data);
+    toast(card ? `記録しました(${mdw(L.withdrawalDateFor(card, data.date))} 引落${pts ? ' / +' + num(pts) + 'P' : ''})` : '記録しました');
     // 日付とカテゴリーはそのまま、続けて入力できるようにする
     form.amount = '';
     form.memo = '';
     form.work = {};
+    form.point = false;
     methodTouched = false;
     $('#amount').blur();
     renderInput();
@@ -1047,6 +1077,7 @@
     else if (tx.type === 'expense') sub.push(methodName(tx.method));
     if (tx.hours && tx.hours.length) sub.push(hoursText(tx.hours));
     if (L.isSavings(tx)) sub.push('使えるお金には含めません');
+    if (L.txPoints(tx)) sub.push(`${tx.pointRate}%還元 +${num(L.txPoints(tx))}P`);
     return `<li class="tap" data-edit="${esc(tx.id)}">
       <div class="ic-wrap">${catIcon(cat, 34)}</div>
       <div class="grow"><div class="name">${esc(cat.name)}${tx.memo ? `<small>(${esc(tx.memo)})</small>` : ''}</div>
@@ -1188,6 +1219,7 @@
         </div>
       </div>
       <div class="card"><h3>カテゴリー別の支出</h3>${catRows || '<p class="small muted" style="margin:0">支出の記録がありません</p>'}</div>
+      ${pointsCard()}
       <div class="card"><h3>貯蓄</h3>
         <div class="rows">
           <div>貯蓄の合計</div><div class="total" style="border:none;padding:0">${en(L.savingsBalance(state))}</div>
@@ -1199,6 +1231,20 @@
         ${activeWallets().map((w) => `<p class="small muted" style="margin:8px 0 0">${esc(w.name)}の今の残高:${en(L.walletBalance(state, w))}</p>`).join('')}</div>
       <div class="card"><h3>この月の引落・入金予定</h3><ul class="list">${scheduleItems(s, L.today()) || '<li class="small muted">ありません</li>'}</ul></div>
       ${bankReport()}`;
+  }
+
+  // ポイント還元の集計
+  function pointsCard() {
+    const p = L.pointsSummary(state, reportMonth);
+    if (!p.total) return '';
+    return `<div class="card"><h3>ポイント還元</h3>
+      <div class="rows">
+        <div>この月のポイント</div><div class="total" style="border:none;padding:0">${num(p.month)}P</div>
+        <div class="sub">対象の支払い ${p.monthCount}件</div><div class="sub">${en(p.monthAmount)}</div>
+        <div>これまでの合計</div><div>${num(p.total)}P</div>
+      </div>
+      <p class="small muted" style="margin:8px 0 0">入力で「還元の対象」にしたカード払いの、金額 × 還元率(1ポイント未満切り捨て)の目安です。実際のポイントはカード会社のアプリで確認してください。</p>
+    </div>`;
   }
 
   // 口座の見通し:引落日ごとの残高の推移
@@ -1277,6 +1323,14 @@
           .join('')}
         <div class="btn-row" style="margin-top:10px"><button type="button" class="btn" id="add-rate">+ 時給を追加</button></div>
         <p class="small muted">「入力 → 収入 → 時給×時間」で、ここの時給ごとに時間を入れると合計が収入になります。</p>
+      </div>
+
+      <div class="card">
+        <h3>ポイント還元</h3>
+        <div class="stack">
+          <label>還元率(%)<input type="number" id="set-point-rate" inputmode="decimal" min="0" step="0.1" value="${Number(st.pointRate) || 0}"></label>
+        </div>
+        <p class="small muted">カード払いの入力で「${Number(st.pointRate) || 0}%還元の対象」を押した支払いに、この率でポイントの目安を記録します。レポートで集計できます。</p>
       </div>
 
       <div class="card">
@@ -1443,6 +1497,9 @@
       w.balanceAdjust = (Number(w.balanceAdjust) || 0) + (Math.round(Number(t.value) || 0) - L.walletBalance(state, w));
     } else if (t.dataset.wallet) {
       findWallet(t.dataset.wallet).name = t.value.trim() || 'コード決済';
+    } else if (t.id === 'set-point-rate') {
+      state.settings.pointRate = Math.min(100, Math.max(0, Number(t.value) || 0));
+      rerender = true;
     } else if (t.dataset.presetIdx !== undefined) {
       state.settings.transportPresets[Number(t.dataset.presetIdx)] = Math.min(MAX_AMOUNT, Math.max(0, Math.round(Number(t.value) || 0)));
     } else if (t.dataset.rateIdx !== undefined) {
