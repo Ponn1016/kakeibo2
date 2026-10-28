@@ -193,19 +193,29 @@ test('メイン口座の見通し', () => {
       { id: 6, type: 'charge', date: '2026-10-27', amount: 3000, method: 'paypay', createdAt: '2026-10-27T10:00:00.000Z' } // 残高を入れた後
     ]
   });
-  const b = L.bankOutlook(s);
-  assert.equal(b.pendingWithdrawals, 38000);
+  // 今日 10/28 → 次の給料日 11/25。11/10 の引落だけ引き、12/10 はその給料で払う前提で引かない
+  const b = L.bankOutlook(s, '2026-10-28');
+  assert.equal(b.payday, '2026-11-25');
+  assert.equal(b.pendingWithdrawals, 30000);
   assert.equal(b.chargesSince, 3000);
-  assert.equal(b.available, 200000 - 38000 - 3000 - 10000);
-  assert.deepEqual(b.withdrawals.map((w) => [w.date, w.amount, w.balanceAfter]), [
-    ['2026-11-10', 30000, 167000],
-    ['2026-12-10', 8000, 159000]
-  ]);
+  assert.equal(b.available, 200000 - 30000 - 3000 - 10000);
+  assert.deepEqual(b.withdrawals.map((w) => [w.date, w.amount, w.balanceAfter]), [['2026-11-10', 30000, 167000]]);
+  assert.deepEqual(b.laterWithdrawals.map((w) => [w.date, w.amount]), [['2026-12-10', 8000]]);
+  assert.equal(b.stale, false);
   // 残高を入れた日と同じ日の引落は、まだ落ちていないものとして引く
   s.settings.bank.asOf = '2026-11-10';
-  assert.equal(L.bankOutlook(s).pendingWithdrawals, 38000);
+  assert.equal(L.bankOutlook(s, '2026-11-10').pendingWithdrawals, 30000);
   s.settings.bank.asOf = '2026-11-11';
-  assert.equal(L.bankOutlook(s).pendingWithdrawals, 8000);
+  assert.equal(L.bankOutlook(s, '2026-11-11').pendingWithdrawals, 0);
+  // 給料日を過ぎると次の月の分を引く。残高が給料日より前なら古いことを知らせる
+  const late = L.bankOutlook(s, '2026-11-26');
+  assert.equal(late.payday, '2026-12-25');
+  assert.equal(late.pendingWithdrawals, 8000);
+  assert.equal(late.stale, true);
+  // 給料日が休日なら前営業日(2027-04-25 は日曜 → 4/23 金)
+  assert.equal(L.paydaysAround(s, '2027-04-01').next, '2027-04-23');
+  s.settings.payday = { day: 10, holidayAdjust: 'next' };
+  assert.equal(L.bankOutlook(s, '2026-11-11').payday, '2026-12-10');
   // 残高が未入力なら null
   assert.equal(L.bankOutlook(state()), null);
 });
@@ -222,7 +232,16 @@ test('ポイント還元(7%)', () => {
   assert.equal(L.txPoints(s.transactions[0]), 84);
   assert.equal(L.txPoints(s.transactions[1]), 34);
   assert.equal(L.txPoints(s.transactions[2]), 0);
-  assert.deepEqual(L.pointsSummary(s, '2026-10'), { month: 118, monthCount: 2, monthAmount: 1698, total: 139 });
+  assert.deepEqual(L.pointsSummary(s, '2026-10'), {
+    month: 118, monthCount: 2, monthAmount: 1698, total: 139,
+    byMethod: [{ method: 'b', points: 118, count: 2, amount: 1698 }]
+  });
+  // Suica の交通費(2%)も同じように数え、支払方法ごとに分ける
+  s.transactions.push({ id: 5, type: 'expense', date: '2026-10-12', amount: 178, method: 'suica', pointRate: 2 }); // 3.56 → 3P
+  const ps = L.pointsSummary(s, '2026-10');
+  assert.equal(ps.month, 121);
+  assert.deepEqual(ps.byMethod.map((x) => [x.method, x.points]), [['b', 118], ['suica', 3]]);
+  s.transactions.pop();
   // ポイントはあと使えるお金に影響しない
   const withPoints = L.monthSummary(s, '2026-10', '2026-10-12').remaining;
   s.transactions.forEach((t) => delete t.pointRate);
@@ -254,8 +273,10 @@ test('カードからチャージする電子マネー(Suica)は、チャージ�
   assert.equal(L.isPrepaidUse(s, s.transactions[4]), false);
   assert.equal(L.dailyTotals(s, '2026-10')['2026-10-06'].expense, 0);
   // 口座の見通し:Suica のチャージはカードの引落(11/27)として、PayPay のチャージは口座からのチャージとして引く
-  const b = L.bankOutlook(s);
-  assert.deepEqual(b.withdrawals.map((w) => [w.date, w.amount]), [['2026-11-27', 3000]]);
+  // (11/27 は次の給料日 10/23 より後なので、今は引かずに一覧だけに出す)
+  const b = L.bankOutlook(s, '2026-10-07');
+  assert.deepEqual(b.laterWithdrawals.map((w) => [w.date, w.amount]), [['2026-11-27', 3000]]);
+  assert.equal(b.pendingWithdrawals, 0);
   assert.equal(b.chargesSince, 1000);
 });
 
@@ -287,5 +308,5 @@ test('現金(ATM で引き出した時点で支出、財布の残高を管理)',
   assert.equal(L.isPrepaidUse(s, s.transactions[3]), true);
   const sum = L.monthSummary(s, '2026-10', '2026-10-05');
   assert.equal(sum.spent, 700 + 10000);
-  assert.equal(L.bankOutlook(s).chargesSince, 10000);
+  assert.equal(L.bankOutlook(s, '2026-10-05').chargesSince, 10000);
 });

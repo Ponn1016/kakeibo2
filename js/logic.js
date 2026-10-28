@@ -339,6 +339,16 @@
       month: inMonth.reduce((s, t) => s + txPoints(t), 0),
       monthCount: inMonth.length,
       monthAmount: inMonth.reduce((s, t) => s + Number(t.amount), 0),
+      // 支払方法ごと(JAL のマイル・Vポイント・JRE POINT などポイントの種類が違うので分けて見せる)
+      byMethod: Object.values(
+        inMonth.reduce((m, t) => {
+          const x = m[t.method] || (m[t.method] = { method: t.method, points: 0, count: 0, amount: 0 });
+          x.points += txPoints(t);
+          x.count += 1;
+          x.amount += Number(t.amount);
+          return m;
+        }, {})
+      ),
       total: txs.reduce((s, t) => s + txPoints(t), 0)
     };
   }
@@ -348,11 +358,37 @@
    * 出せるお金 = 残高 − 残高を入れた日以降のカード引落 − 残高を入れた後に記録したチャージ − 最低限残しておく額
    * 残高を入れた日と同じ日の引落は、まだ落ちていないものとして引く(少なめに見積もる)
    */
-  function bankOutlook(state) {
+  // 給料がメイン口座に振り込まれる日(settings.payday、初期値は毎月25日・休日なら前営業日)
+  function paydayOf(state, y, m) {
+    const p = (state.settings || {}).payday || {};
+    return recurringIncomeDate({ day: Number(p.day) || 25, holidayAdjust: p.holidayAdjust || 'prev' }, y, m);
+  }
+
+  // 指定日より後の最初の給料日と、指定日以前の最後の給料日
+  function paydaysAround(state, date) {
+    const { y, m } = parse(date);
+    let prev = null;
+    for (let i = -2; i <= 2; i++) {
+      const base = new Date(y, m - 1 + i, 1);
+      const d = paydayOf(state, base.getFullYear(), base.getMonth() + 1);
+      if (d > date) return { prev, next: d };
+      prev = d;
+    }
+    return { prev, next: null };
+  }
+
+  /*
+   * メイン口座から出せるお金(次の給料日までの資金繰り)。
+   * 出せるお金 = 残高 − 次の給料日の前日までのカード引落 − 残高を入れた後のチャージ・ATM 引き出し − 最低限残しておく額
+   * 次の給料日以降の引落は、その給料で払う前提で引かない(一覧には出す)
+   */
+  function bankOutlook(state, todayDate) {
     const bank = (state.settings || {}).bank;
     if (!bank || !bank.asOf) return null;
     const balance = Number(bank.balance) || 0;
     const reserve = Number((state.settings || {}).savingsGoal) || 0;
+    const now = todayDate || today();
+    const { prev, next: payday } = paydaysAround(state, now);
 
     const map = {};
     (state.transactions || []).forEach((tx) => {
@@ -364,17 +400,19 @@
       if (!map[key]) map[key] = { date: wd, name: card.name, amount: 0 };
       map[key].amount += Number(tx.amount);
     });
-    const withdrawals = Object.values(map).sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
-    const pendingWithdrawals = withdrawals.reduce((s, w) => s + w.amount, 0);
+    const all = Object.values(map).sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
+    const before = all.filter((w) => w.date < payday);
+    const later = all.filter((w) => w.date >= payday);
+    const pendingWithdrawals = before.reduce((s, w) => s + w.amount, 0);
 
     // 口座から出たお金:チャージ(PayPay など)と、口座から直接の支出(ATM での引き出しなど。method 'bank')
     const chargesSince = (state.transactions || [])
       .filter((t) => (t.type === 'charge' || (t.type === 'expense' && t.method === 'bank')) && (!bank.updatedAt || String(t.createdAt) > bank.updatedAt))
       .reduce((s, t) => s + Number(t.amount), 0);
 
-    // 引落日ごとの残高の推移
+    // 給料日までの引落日ごとの残高の推移
     let running = balance - chargesSince;
-    const timeline = withdrawals.map((w) => {
+    const timeline = before.map((w) => {
       running -= w.amount;
       return { ...w, balanceAfter: running };
     });
@@ -382,7 +420,11 @@
     return {
       balance,
       asOf: bank.asOf,
+      payday,
+      // 残高を入れた後に給料日が来ている(残高が古い)
+      stale: !!prev && bank.asOf < prev,
       withdrawals: timeline,
+      laterWithdrawals: later,
       pendingWithdrawals,
       chargesSince,
       reserve,
@@ -638,6 +680,7 @@
     carryOver,
     savingsBalance,
     bankOutlook,
+    paydaysAround,
     txPoints,
     pointsSummary,
     isSavings,

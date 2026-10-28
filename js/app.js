@@ -40,10 +40,12 @@
       version: 2,
       settings: {
         savingsGoal: 0,
+        savingsPlan: 0, // 毎月貯蓄に回したい額。あと使えるお金からは引かず、ホームでグレーで見せる
         basis: 'accrual',
         hourlyRates: [1830, 1530, 1380, 1280],
         transportPresets: [1372, 1116], // 収入「交通費」でボタンから選べる金額
         pointRate: 7, // カード払いで「還元の対象」にしたときの還元率(%)
+        payday: { day: 25, holidayAdjust: 'prev' }, // 給料がメイン口座に振り込まれる日(口座から出せるお金の区切り)
         incomeMode: 'hourly' // 収入の入力方法:'hourly'(時給×時間)/ 'amount'(金額)
       },
       cards: [
@@ -53,7 +55,8 @@
       // コード決済・電子マネー。口座からチャージして使うので、使った日に支払ったものとして扱う
       // chargeFrom にカードの id があると、そのカードからチャージする(チャージした時点で支出)。なければメイン口座から
       // chargeFrom が 'bank' なら、メイン口座から引き出した時点で支出(現金。財布の残高を入れてから管理を始める)
-      wallets: [{ id: 'paypay', name: 'PayPay' }, { id: 'suica', name: 'Suica', chargeFrom: 'cardB' }, { id: 'cash', name: '現金', chargeFrom: 'bank' }],
+      // pointRate があると、その支払いを「還元の対象」にできる(Suica は交通費で 2% など)
+      wallets: [{ id: 'paypay', name: 'PayPay' }, { id: 'suica', name: 'Suica', chargeFrom: 'cardB', pointRate: 2 }, { id: 'cash', name: '現金', chargeFrom: 'bank' }],
       // 毎月決まった額の収入。金額 0 のあいだは使わない
       incomes: [{ id: 'fixed-income', name: '固定収入', amount: 0, day: 25, holidayAdjust: 'prev' }],
       incomeOverrides: {},
@@ -65,8 +68,15 @@
   // 今日を基準にした、お試し用のサンプルデータ
   function demoState() {
     const s = defaultState();
-    s.settings.savingsGoal = 20000;
     const t = L.today();
+    s.settings.savingsGoal = 10000;
+    s.settings.savingsPlan = 10000;
+    // 口座の残高は記録より後に入れたことにする(チャージ・引き出しは残高に反映済み)
+    s.settings.bank = { balance: 98000, asOf: t, updatedAt: '2000-01-02T00:00:00.000Z' };
+    // 財布の管理は最初から(残高 2,000円 から)
+    const cash = s.wallets.find((w) => w.id === 'cash');
+    cash.since = '2000-01-01T00:00:00.000Z';
+    cash.balanceAdjust = 2000;
     const monthStart = t.slice(0, 8) + '01';
     const shift = [
       { rate: 1830, minutes: 48 * 60 },
@@ -75,24 +85,29 @@
     ];
     const rows = [
       [monthStart, 'income', L.hourlyTotal(shift), 'salary', 'cash', '先月分', shift],
+      [-45, 'income', 30000, 'extra', 'cash', '先月の手元のお金'],
+      [-40, 'expense', 12000, 'social', 'cardA', '旅行', null, { pointRate: 7 }],
       [-15, 'income', 8000, 'extra', 'cash', 'フリマ'],
       [-20, 'expense', 4800, 'fixed', 'cardB', '電気'],
       [-19, 'expense', 3200, 'fixed', 'cardB', 'スマホ'],
+      [-16, 'expense', 10000, 'other', 'bank', 'ATM引き出し', null, { chargeTo: 'cash' }],
       [-14, 'expense', 1065, 'food', 'cash', ''],
-      [-12, 'expense', 1140, 'daily', 'cardB', '洗剤'],
-      [-9, 'expense', 6300, 'social', 'cardB', '飲み会'],
-      [-8, 'expense', 3300, 'other', 'cash', '交通費'],
+      [-12, 'expense', 1140, 'daily', 'cardB', '洗剤', null, { pointRate: 7 }],
+      [-10, 'expense', 3000, 'other', 'cardB', 'Suicaチャージ', null, { chargeTo: 'suica' }],
+      [-9, 'expense', 6300, 'social', 'cardB', '飲み会', null, { pointRate: 10 }],
+      [-8, 'expense', 178, 'other', 'suica', '電車', null, { pointRate: 2 }],
+      [-8, 'expense', 178, 'other', 'suica', '電車', null, { pointRate: 2 }],
       [-6, 'expense', 2400, 'beauty', 'cardA', ''],
       [-4, 'expense', 740, 'food', 'cash', ''],
       [-2, 'expense', 1000, 'social', 'cash', ''],
       [-1, 'expense', 750, 'food', 'cash', 'ランチ'],
-      [-1, 'expense', 780, 'food', 'cardB', 'コンビニ'],
+      [-1, 'expense', 780, 'food', 'cardB', 'コンビニ', null, { pointRate: 7 }],
       [-3, 'expense', 1480, 'daily', 'paypay', 'ドラッグストア'],
       [-5, 'expense', 650, 'food', 'paypay', 'カフェ'],
       [-5, 'charge', 1000, null, 'paypay', ''],
       [-3, 'charge', 2000, null, 'paypay', '']
     ];
-    s.transactions = rows.map(([d, type, amount, category, method, memo, hours], i) => ({
+    s.transactions = rows.map(([d, type, amount, category, method, memo, hours, extra], i) => ({
       id: 'demo' + i,
       createdAt: '2000-01-01T00:00:' + L.pad(i),
       date: typeof d === 'string' ? d : L.addDays(t, d),
@@ -101,7 +116,8 @@
       category,
       method,
       memo,
-      ...(hours ? { hours } : {})
+      ...(hours ? { hours } : {}),
+      ...(extra || {})
     }));
     return s;
   }
@@ -128,6 +144,11 @@
       if (!settings.addedSuica) {
         if (!wallets.some((w) => w.id === 'suica')) wallets = wallets.concat(base.wallets.filter((w) => w.id === 'suica'));
         settings.addedSuica = true;
+      }
+      // Suica の還元率(2%)も、以前のデータに1回だけ入れる
+      if (!settings.addedSuicaPoint) {
+        wallets = wallets.map((w) => (w.id === 'suica' && w.pointRate === undefined ? { ...w, pointRate: 2 } : w));
+        settings.addedSuicaPoint = true;
       }
       // 現金(財布)は支払方法の「現金」と同じ id。管理を始めるまでは今までどおり使ったときに支出
       if (!wallets.some((w) => w.id === 'cash')) wallets = wallets.concat(base.wallets.filter((w) => w.id === 'cash'));
@@ -447,13 +468,25 @@
     if (s.remaining < 0) pace = { cls: 'bad', label: '予算オーバー', note: en(-s.remaining) + ' 使いすぎています' };
     else if (s.paceDiff >= 0) pace = { cls: 'good', label: 'ペース順調', note: '予定より ' + en(s.paceDiff) + ' 少なめ' };
     else pace = { cls: 'warn', label: '使いすぎ注意', note: '予定より ' + en(-s.paceDiff) + ' 多め' };
+    // 貯蓄に回したい分:あと使えるお金のうちこの額をグレーで見せる(計算からは引かない)
+    const plan = Math.max(0, Number(state.settings.savingsPlan) || 0);
+    const planPct = budget && plan ? Math.min(100, (plan / budget) * 100) : 0;
+    const held = Math.min(plan, Math.max(s.remaining, 0));
+    let planLine = '';
+    if (plan && s.remaining >= plan) {
+      planLine = `<div class="plan-line"><span>自由に使える <b>${en(s.remaining - plan)}</b></span><span class="held">貯蓄に回す分 ${en(plan)}</span></div>`;
+    } else if (plan) {
+      planLine = `<div class="plan-line over"><span>貯蓄に回したい ${en(plan)} のうち <b>${en(plan - held)}</b> に食い込んでいます</span></div>`;
+    }
 
     el.innerHTML = `
       <section class="focus">
         <div class="focus-label">${m}月 あと使えるお金</div>
         <div class="focus-big ${s.remaining < 0 ? 'minus' : ''}">${s.remaining < 0 ? '-' : ''}${num(Math.abs(s.remaining))}<span>円</span></div>
+        ${planLine}
         <div class="pace ${pace.cls}"><b>${pace.label}</b>${pace.note}</div>
-        <div class="meter" role="img" aria-label="予算${en(budget)}のうち${en(s.spent)}使用">
+        <div class="meter" role="img" aria-label="予算${en(budget)}のうち${en(s.spent)}使用${plan ? '、貯蓄に回す分' + en(plan) : ''}">
+          ${planPct ? `<span class="plan" style="width:${planPct.toFixed(1)}%"></span>` : ''}
           <span class="used ${pace.cls}" style="width:${usedPct.toFixed(1)}%"></span>
           <span class="expected" style="left:${expectedPct.toFixed(1)}%" title="今日までの目安"></span>
         </div>
@@ -465,20 +498,21 @@
       ${demo}`;
   }
 
-  // メイン口座から出せるお金(残高 − 引落予定 − チャージ − 残しておく額)
+  // メイン口座から出せるお金(残高 − 次の給料日までの引落 − チャージ − 残しておく額)
   function bankCard() {
     const b = L.bankOutlook(state);
     if (!b) {
       return `<section class="bank-card">
         <div class="bank-label">メイン口座から出せるお金</div>
-        <p class="small" style="margin:6px 0 10px">銀行アプリで見た残高を入れると、カードの引落予定を除いて、PayPay へのチャージや ATM で出していい額がわかります。</p>
+        <p class="small" style="margin:6px 0 10px">銀行アプリで見た残高を入れると、次の給料日までのカードの引落を除いて、PayPay へのチャージや ATM で出していい額がわかります。</p>
         <button type="button" class="btn small primary" data-bank-update>口座の残高を入れる</button>
       </section>`;
     }
     return `<section class="bank-card">
       <div class="bank-head"><span class="bank-label">メイン口座から出せるお金</span><button type="button" class="btn small" data-bank-update>残高を更新</button></div>
       <div class="bank-big ${b.available < 0 ? 'minus' : ''}">${b.available < 0 ? '-' : ''}${num(Math.abs(b.available))}<span>円</span></div>
-      <p class="budget-line" style="text-align:left">残高 ${en(b.balance)}(${mdw(b.asOf)}時点)− 引落予定 ${en(b.pendingWithdrawals)}${b.chargesSince ? ' − チャージ ' + en(b.chargesSince) : ''}${b.reserve ? ' − 残しておく ' + en(b.reserve) : ''}</p>
+      <p class="budget-line" style="text-align:left">残高 ${en(b.balance)}(${mdw(b.asOf)}時点)− ${mdw(b.payday)}の給料日までの引落 ${en(b.pendingWithdrawals)}${b.chargesSince ? ' − チャージ・引き出し ' + en(b.chargesSince) : ''}${b.reserve ? ' − 残しておく ' + en(b.reserve) : ''}</p>
+      ${b.stale ? '<p class="small" style="margin:6px 0 0;color:var(--warn)">残高を入れた後に給料日が過ぎています。給料が入った残高に更新してください。</p>' : ''}
     </section>`;
   }
 
@@ -744,19 +778,26 @@
     renderPointToggle();
   }
 
-  function pointRate() {
-    return Number(state.settings.pointRate) || 0;
+  // 支払方法ごとの還元率の初期値:カードはメニューの値、電子マネーはそれぞれの値(0 なら対象にできない)
+  function pointRate(method) {
+    if (findCard(method)) return Number(state.settings.pointRate) || 0;
+    const w = findWallet(method);
+    return (w && Number(w.pointRate)) || 0;
   }
 
-  // カード払いのときに出す「還元の対象」ボタン。オンにすると還元率(初期値はメニューの値)を入れられる
+  function pointEligible(method) {
+    return !!findCard(method) || pointRate(method) > 0;
+  }
+
+  // カード払い・還元率のある電子マネーのときに出す「還元の対象」ボタン。オンにすると還元率(初期値はメニューの値)を入れられる
   function renderPointToggle() {
     const row = $('#point-row');
-    row.hidden = !(form.type === 'expense' && findCard(form.method));
+    row.hidden = !(form.type === 'expense' && pointEligible(form.method));
     if (row.hidden) return;
     const btn = $('#point-toggle');
     btn.classList.toggle('active', form.point);
     btn.setAttribute('aria-pressed', String(form.point));
-    btn.textContent = form.point ? '✓ 還元の対象' : `${pointRate()}%還元の対象`;
+    btn.textContent = form.point ? '✓ 還元の対象' : `${pointRate(form.method)}%還元の対象`;
     $('#point-rate-wrap').hidden = !form.point;
     if (form.point && $('#point-rate').value !== form.pointRate) $('#point-rate').value = form.pointRate;
     updatePointPreview();
@@ -769,7 +810,7 @@
 
   $('#point-toggle').addEventListener('click', () => {
     form.point = !form.point;
-    if (form.point && !(Number(form.pointRate) > 0)) form.pointRate = String(pointRate() || '');
+    if (form.point && !(Number(form.pointRate) > 0)) form.pointRate = String(pointRate(form.method) || '');
     renderPointToggle();
   });
 
@@ -941,6 +982,8 @@
   $('#methods').addEventListener('click', (e) => {
     const b = e.target.closest('[data-method]');
     if (!b) return;
+    // 支払方法を変えたら、還元率はその支払方法の初期値に戻す
+    if (form.method !== b.dataset.method && form.point) form.pointRate = String(pointRate(b.dataset.method) || '');
     form.method = b.dataset.method;
     methodTouched = true;
     renderMethods();
@@ -978,7 +1021,7 @@
       memo: form.memo.trim()
     };
     if (isHourly()) data.hours = hourlyRows();
-    if (data.type === 'expense' && findCard(data.method) && form.point && Number(form.pointRate) > 0) data.pointRate = Number(form.pointRate);
+    if (data.type === 'expense' && pointEligible(data.method) && form.point && Number(form.pointRate) > 0) data.pointRate = Number(form.pointRate);
     if (form.editingId) {
       const tx = state.transactions.find((t) => t.id === form.editingId);
       delete tx.hours;
@@ -1305,9 +1348,10 @@
       <div class="rows">
         <div>この月のポイント</div><div class="total" style="border:none;padding:0">${num(p.month)}P</div>
         <div class="sub">対象の支払い ${p.monthCount}件</div><div class="sub">${en(p.monthAmount)}</div>
+        ${p.byMethod.map((x) => `<div class="sub">${esc(methodName(x.method))}(${x.count}件 ${en(x.amount)})</div><div class="sub">${num(x.points)}P</div>`).join('')}
         <div>これまでの合計</div><div>${num(p.total)}P</div>
       </div>
-      <p class="small muted" style="margin:8px 0 0">入力で「還元の対象」にしたカード払いの、金額 × 還元率(1ポイント未満切り捨て)の目安です。実際のポイントはカード会社のアプリで確認してください。</p>
+      <p class="small muted" style="margin:8px 0 0">入力で「還元の対象」にした支払い(カード・Suica など)の、金額 × 還元率(1ポイント未満切り捨て)の目安です。実際のポイントはカード会社のアプリで確認してください。</p>
     </div>`;
   }
 
@@ -1317,7 +1361,7 @@
     if (!b) return '';
     const rows = [`<li><div class="small" style="width:66px">${mdw(b.asOf)}</div><div class="grow">残高</div><div>${en(b.balance)}</div></li>`];
     if (b.chargesSince) {
-      rows.push(`<li><div class="small" style="width:66px"></div><div class="grow">チャージ(残高を入れた後)</div><div class="expense">-${en(b.chargesSince)}</div></li>`);
+      rows.push(`<li><div class="small" style="width:66px"></div><div class="grow">チャージ・引き出し(残高を入れた後)</div><div class="expense">-${en(b.chargesSince)}</div></li>`);
     }
     b.withdrawals.forEach((w) =>
       rows.push(`<li><div class="small" style="width:66px">${mdw(w.date)}</div><div class="grow">${esc(w.name)} 引落<div class="small muted">残高 ${en(w.balanceAfter)}</div></div><div class="expense">-${en(w.amount)}</div></li>`)
@@ -1325,8 +1369,10 @@
     if (b.reserve) rows.push(`<li><div class="small" style="width:66px"></div><div class="grow">残しておく額</div><div>-${en(b.reserve)}</div></li>`);
     return `<div class="card"><h3>メイン口座の見通し</h3>
       <ul class="list">${rows.join('')}</ul>
-      <div class="rows" style="margin-top:6px"><div class="total">出せるお金</div><div class="total">${en(b.available)}</div></div>
-      <p class="small muted" style="margin:8px 0 0">引落予定は、カード払いで記録した分から計算しています。残高を入れた日の引落は、まだ落ちていないものとして引いています。</p>
+      <div class="rows" style="margin-top:6px"><div class="total">出せるお金(${mdw(b.payday)}の給料日まで)</div><div class="total">${en(b.available)}</div></div>
+      ${b.laterWithdrawals.length ? `<div class="small muted" style="margin:10px 0 4px">給料日より後の引落(その給料で払う前提で、上では引いていません)</div>
+      <ul class="list">${b.laterWithdrawals.map((w) => `<li><div class="small" style="width:66px">${mdw(w.date)}</div><div class="grow">${esc(w.name)} 引落</div><div class="muted">${en(w.amount)}</div></li>`).join('')}</ul>` : ''}
+      <p class="small muted" style="margin:8px 0 0">引落予定は、カード払いで記録した分から計算しています。残高を入れた日の引落は、まだ落ちていないものとして引いています。給料日はメニューで変えられます。</p>
     </div>`;
   }
 
@@ -1425,6 +1471,7 @@
                 <option value="bank" ${w.chargeFrom === 'bank' ? 'selected' : ''}>メイン口座(入れた・引き出した時点で支出)</option>
                 ${activeCards().map((c) => `<option value="${esc(c.id)}" ${w.chargeFrom === c.id ? 'selected' : ''}>${esc(c.name)}(チャージした時点で支出)</option>`).join('')}
               </select></label>
+              ${w.id === 'cash' ? '' : `<label class="full">還元率の初期値(%。0 なら還元の対象にしない)<input type="number" data-wallet-point="${esc(w.id)}" inputmode="decimal" min="0" max="100" step="0.1" value="${Number(w.pointRate) || 0}"></label>`}
             </div>
             ${w.id === 'cash' ? (w.since ? '' : '<p class="small" style="margin:6px 0 0">財布の今の残高を入れると、現金の管理を始めます(ATM で引き出した時点で支出、現金で払ったときは財布の残高が減るだけ)。それまでは、現金で払ったときに支出になります。</p>') : `<div class="row-actions"><button type="button" class="btn small danger" data-del-wallet="${esc(w.id)}">削除</button></div>`}
           </div>`
@@ -1484,6 +1531,12 @@
         <div class="stack">
           <p class="small muted" style="margin:0">あと使えるお金 = 先月からの繰越 + 今月の収入 − 今月の支出 − 最低限残しておく額。使わなかった分は翌月に繰り越します。</p>
           <label>最低限残しておく額(あと使えるお金から先に除く)<input type="number" id="set-savings" inputmode="numeric" min="0" value="${Number(st.savingsGoal) || 0}"></label>
+          <label>毎月貯蓄に回したい額(引かずに、ホームでグレーで表示)<input type="number" id="set-savings-plan" inputmode="numeric" min="0" max="${MAX_AMOUNT}" value="${Number(st.savingsPlan) || 0}"></label>
+          <p class="small muted" style="margin:0">メイン口座から出せるお金は、次の給料日の前日までに落ちるカード代だけを引きます。</p>
+          <div class="form-grid">
+            <label>メイン口座の給料日<select id="set-payday-day">${dayOptions(st.payday.day)}</select></label>
+            <label>休日の場合<select id="set-payday-adjust">${adjustOptions(st.payday.holidayAdjust)}</select></label>
+          </div>
           <label>カード払いの計上月<select id="set-basis">
             <option value="accrual" ${st.basis !== 'cash' ? 'selected' : ''}>使った月に計上(使いすぎ防止向き)</option>
             <option value="cash" ${st.basis === 'cash' ? 'selected' : ''}>引き落とされる月に計上(口座残高向き)</option>
@@ -1561,6 +1614,8 @@
       const c = state.categories[catEditType].find((x) => x.id === catEl.dataset.catId);
       c[t.dataset.cf] = t.dataset.cf === 'name' ? t.value.trim() || 'カテゴリー' : t.value;
       rerender = t.dataset.cf !== 'name';
+    } else if (t.dataset.walletPoint) {
+      findWallet(t.dataset.walletPoint).pointRate = Math.min(100, Math.max(0, Number(t.value) || 0));
     } else if (t.dataset.walletFrom) {
       const w = findWallet(t.dataset.walletFrom);
       const before = L.walletBalance(state, w);
@@ -1592,8 +1647,15 @@
     } else if (t.id === 'set-savings-balance') {
       const adjust = Number(state.settings.savingsAdjust) || 0;
       state.settings.savingsAdjust = adjust + (Math.round(Number(t.value) || 0) - L.savingsBalance(state));
+    } else if (t.id === 'set-savings-plan') {
+      state.settings.savingsPlan = Math.min(MAX_AMOUNT, Math.max(0, Math.round(Number(t.value) || 0)));
     } else if (t.id === 'set-savings') {
       state.settings.savingsGoal = Math.max(0, Number(t.value) || 0);
+    } else if (t.id === 'set-payday-day' || t.id === 'set-payday-adjust') {
+      state.settings.payday = {
+        day: Number($('#set-payday-day').value) || 25,
+        holidayAdjust: $('#set-payday-adjust').value || 'prev'
+      };
     } else if (t.id === 'set-basis') {
       state.settings.basis = t.value;
     } else if (t.id === 'import-file') {
