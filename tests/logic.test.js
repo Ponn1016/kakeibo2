@@ -258,3 +258,34 @@ test('カードからチャージする電子マネー(Suica)は、チャージ�
   assert.deepEqual(b.withdrawals.map((w) => [w.date, w.amount]), [['2026-11-27', 3000]]);
   assert.equal(b.chargesSince, 1000);
 });
+
+test('現金(ATM で引き出した時点で支出、財布の残高を管理)', () => {
+  const s = state({
+    settings: { savingsGoal: 0, bank: { balance: 100000, asOf: '2026-10-01', updatedAt: '2026-10-01T00:00:00.000Z' } },
+    incomes: [],
+    wallets: [{ id: 'cash', name: '現金', chargeFrom: 'bank' }],
+    transactions: [
+      { id: 1, type: 'income', date: '2026-10-01', amount: 50000, method: 'cash', category: 'inc-other', createdAt: '2026-10-01T00:00:00.000Z' },
+      { id: 2, type: 'expense', date: '2026-10-02', amount: 700, method: 'cash', createdAt: '2026-10-02T00:00:00.000Z' } // 管理を始める前
+    ]
+  });
+  // 財布の残高を入れる前は、これまでどおり現金で使ったときに支出
+  assert.equal(L.isPrepaidUse(s, s.transactions[1]), false);
+  assert.equal(L.monthSummary(s, '2026-10', '2026-10-02').spent, 700);
+
+  // 10/3 に財布の残高 2,000円 を入れて管理を始める
+  s.wallets[0].since = '2026-10-03T00:00:00.000Z';
+  s.wallets[0].balanceAdjust = 2000;
+  s.transactions.push(
+    // ATM で 10,000円 引き出し → その時点で支出、口座からも出る
+    { id: 3, type: 'expense', date: '2026-10-04', amount: 10000, method: 'bank', chargeTo: 'cash', createdAt: '2026-10-04T00:00:00.000Z' },
+    // 現金で 1,200円 → 財布の残高が減るだけ
+    { id: 4, type: 'expense', date: '2026-10-05', amount: 1200, method: 'cash', createdAt: '2026-10-05T00:00:00.000Z' }
+  );
+  assert.equal(L.walletBalance(s, s.wallets[0]), 2000 + 10000 - 1200);
+  assert.equal(L.isPrepaidUse(s, s.transactions[1]), false); // 始める前の記録はそのまま
+  assert.equal(L.isPrepaidUse(s, s.transactions[3]), true);
+  const sum = L.monthSummary(s, '2026-10', '2026-10-05');
+  assert.equal(sum.spent, 700 + 10000);
+  assert.equal(L.bankOutlook(s).chargesSince, 10000);
+});

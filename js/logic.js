@@ -367,8 +367,9 @@
     const withdrawals = Object.values(map).sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
     const pendingWithdrawals = withdrawals.reduce((s, w) => s + w.amount, 0);
 
+    // 口座から出たお金:チャージ(PayPay など)と、口座から直接の支出(ATM での引き出しなど。method 'bank')
     const chargesSince = (state.transactions || [])
-      .filter((t) => t.type === 'charge' && (!bank.updatedAt || String(t.createdAt) > bank.updatedAt))
+      .filter((t) => (t.type === 'charge' || (t.type === 'expense' && t.method === 'bank')) && (!bank.updatedAt || String(t.createdAt) > bank.updatedAt))
       .reduce((s, t) => s + Number(t.amount), 0);
 
     // 引落日ごとの残高の推移
@@ -564,7 +565,9 @@
   function walletBalance(state, wallet) {
     let bal = Number(wallet.balanceAdjust) || 0;
     (state.transactions || []).forEach((t) => {
-      // カードからのチャージは、そのカードの支出(chargeTo にコード決済の id)として記録している
+      // 管理を始める前(wallet.since より前に記録したもの)は数えない
+      if (wallet.since && String(t.createdAt) < wallet.since) return;
+      // 支出扱いのチャージ・引き出しは、支出(chargeTo にコード決済などの id)として記録している
       if (t.type === 'expense' && t.chargeTo === wallet.id) bal += Number(t.amount);
       if (t.method !== wallet.id) return;
       if (t.type === 'charge') bal += Number(t.amount);
@@ -574,13 +577,18 @@
   }
 
   /*
-   * カードからチャージするコード決済(Suica など。wallet.chargeFrom にカードの id)での支払いか。
-   * チャージした時点でカードの支出として数えているので、支払いは残高を減らすだけで支出には数えない
+   * 入れた時点で支出として数える財布・電子マネーでの支払いか。
+   *   wallet.chargeFrom = カードの id … カードからチャージ(Suica など)
+   *   wallet.chargeFrom = 'bank'      … メイン口座から引き出し(現金。wallet.since を入れてから管理を始める)
+   * チャージ・引き出しの時点で支出として数えているので、支払いは残高を減らすだけで支出には数えない
    */
   function isPrepaidUse(state, t) {
     if (t.type !== 'expense') return false;
     const w = (state.wallets || []).find((x) => x.id === t.method);
-    return !!(w && w.chargeFrom && isCard(state, w.chargeFrom));
+    if (!w || !w.chargeFrom) return false;
+    if (w.chargeFrom === 'bank' && !w.since) return false;
+    if (w.since && String(t.createdAt) < w.since) return false;
+    return w.chargeFrom === 'bank' || isCard(state, w.chargeFrom);
   }
 
   /*

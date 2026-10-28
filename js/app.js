@@ -52,7 +52,8 @@
       ],
       // コード決済・電子マネー。口座からチャージして使うので、使った日に支払ったものとして扱う
       // chargeFrom にカードの id があると、そのカードからチャージする(チャージした時点で支出)。なければメイン口座から
-      wallets: [{ id: 'paypay', name: 'PayPay' }, { id: 'suica', name: 'Suica', chargeFrom: 'cardB' }],
+      // chargeFrom が 'bank' なら、メイン口座から引き出した時点で支出(現金。財布の残高を入れてから管理を始める)
+      wallets: [{ id: 'paypay', name: 'PayPay' }, { id: 'suica', name: 'Suica', chargeFrom: 'cardB' }, { id: 'cash', name: '現金', chargeFrom: 'bank' }],
       // 毎月決まった額の収入。金額 0 のあいだは使わない
       incomes: [{ id: 'fixed-income', name: '固定収入', amount: 0, day: 25, holidayAdjust: 'prev' }],
       incomeOverrides: {},
@@ -128,6 +129,8 @@
         if (!wallets.some((w) => w.id === 'suica')) wallets = wallets.concat(base.wallets.filter((w) => w.id === 'suica'));
         settings.addedSuica = true;
       }
+      // 現金(財布)は支払方法の「現金」と同じ id。管理を始めるまでは今までどおり使ったときに支出
+      if (!wallets.some((w) => w.id === 'cash')) wallets = wallets.concat(base.wallets.filter((w) => w.id === 'cash'));
       return {
         ...base,
         ...data,
@@ -220,6 +223,12 @@
     return state.cards.find((c) => c.id === id) || null;
   }
 
+  // 財布(現金)の残高を管理しているか(メニューで財布の残高を入れると始まる)
+  function cashTracked() {
+    const w = findWallet('cash');
+    return !!(w && w.since);
+  }
+
   function activeWallets() {
     return (state.wallets || []).filter((w) => !w.archived);
   }
@@ -230,6 +239,7 @@
 
   function methodName(id) {
     if (id === 'cash') return '現金';
+    if (id === 'bank') return 'メイン口座';
     const c = findCard(id) || findWallet(id);
     return c ? c.name : '不明';
   }
@@ -713,10 +723,10 @@
   function renderMethods() {
     const sug = L.suggestPayment(state, form.date, Number(form.amount) || 0);
     if (!methodTouched) form.method = sug.best.method;
-    const wallets = activeWallets();
+    const wallets = activeWallets().filter((w) => w.id !== 'cash');
     const curWallet = findWallet(form.method);
-    if (curWallet && !wallets.includes(curWallet)) wallets.push(curWallet);
-    const methods = [{ id: 'cash', name: '現金', wd: 'その場で' }]
+    if (curWallet && curWallet.id !== 'cash' && !wallets.includes(curWallet)) wallets.push(curWallet);
+    const methods = [{ id: 'cash', name: '現金', wd: cashTracked() ? '残高 ' + en(L.walletBalance(state, findWallet('cash'))) : 'その場で' }]
       .concat(wallets.map((w) => ({ id: w.id, name: w.name, wd: '残高 ' + en(L.walletBalance(state, w)) })))
       .concat(activeCards().map((c) => ({ id: c.id, name: c.name, wd: mdw(L.withdrawalDateFor(c, form.date)) + '引落' })));
     // 編集中の記録が削除済みカードの場合も表示する
@@ -776,7 +786,8 @@
   // コード決済を選んでいるとき、その残高と不足額。選んでいなければ null
   function walletShortfall() {
     const w = form.type === 'expense' ? findWallet(form.method) : null;
-    if (!w) return null;
+    // 現金は、財布の残高を入れて管理を始めるまでは見ない
+    if (!w || (w.chargeFrom === 'bank' && !w.since)) return null;
     const bal = L.walletBalance(state, w);
     // 編集中は、この記録の分を残高に戻して比べる
     const editing = form.editingId && state.transactions.find((t) => t.id === form.editingId);
@@ -792,17 +803,22 @@
     el.hidden = !ws;
     renderSubmit();
     if (!ws) return;
-    el.innerHTML = `<span>${esc(ws.w.name)}残高 <b>${en(ws.bal)}</b>${ws.short ? ` <span class="short">${en(ws.short)} 足りません</span>` : ''}</span>
-      <button type="button" class="btn small" data-charge-add>${I.ui('plus', 14, 2)}チャージを記録</button>`;
+    const isCash = ws.w.chargeFrom === 'bank';
+    el.innerHTML = `<span>${isCash ? '財布' : esc(ws.w.name)}の残高 <b>${en(ws.bal)}</b>${ws.short ? ` <span class="short">${en(ws.short)} 足りません</span>` : ''}</span>
+      <button type="button" class="btn small" data-charge-add>${I.ui('plus', 14, 2)}${isCash ? 'ATMで引き出しを記録' : 'チャージを記録'}</button>`;
   }
 
   // チャージ額を聞いて記録する。記録したら true
   async function recordCharge(w, suggest, message) {
     const card = w.chargeFrom ? findCard(w.chargeFrom) : null;
+    const fromBank = w.chargeFrom === 'bank';
     const note = card
       ? `${card.name}からのチャージなので、チャージした時点で支出として数えます(${mdw(L.withdrawalDateFor(card, form.date))} 引落)。`
-      : '口座からの移動なので、あと使えるお金は減りません。';
-    const amount = await ask(`${message ? message + '\n' : ''}${w.name}にチャージした金額(${mdw(form.date)})\n${note}`, {
+      : fromBank
+        ? 'メイン口座からの引き出しなので、引き出した時点で支出として数えます。'
+        : '口座からの移動なので、あと使えるお金は減りません。';
+    const title = fromBank ? `ATM で引き出した金額(${mdw(form.date)})` : `${w.name}にチャージした金額(${mdw(form.date)})`;
+    const amount = await ask(`${message ? message + '\n' : ''}${title}\n${note}`, {
       withInput: true,
       value: suggest,
       okLabel: '記録する'
@@ -812,11 +828,14 @@
     if (card) {
       // カードの支出として記録し、chargeTo で電子マネーの残高に足す
       state.transactions.push({ ...base, type: 'expense', method: card.id, category: 'other', memo: w.name + 'チャージ', chargeTo: w.id });
+    } else if (fromBank) {
+      // メイン口座からの支出として記録し、chargeTo で財布の残高に足す
+      state.transactions.push({ ...base, type: 'expense', method: 'bank', category: 'other', memo: 'ATM引き出し', chargeTo: w.id });
     } else {
       state.transactions.push({ ...base, type: 'charge', method: w.id, memo: '' });
     }
     save();
-    toast(`チャージを記録しました(残高 ${en(L.walletBalance(state, w))})`);
+    toast(`${fromBank ? '引き出し' : 'チャージ'}を記録しました(残高 ${en(L.walletBalance(state, w))})`);
     renderMethods();
     return true;
   }
@@ -943,7 +962,7 @@
     // コード決済の残高が足りないときは、先にチャージを記録してもらう
     const ws = walletShortfall();
     if (ws && ws.short > 0) {
-      const charged = await recordCharge(ws.w, ws.suggest, `${ws.w.name}の残高が ${en(ws.short)} 足りないため、このままでは記録できません。`);
+      const charged = await recordCharge(ws.w, ws.suggest, `${ws.w.chargeFrom === 'bank' ? '財布の現金' : ws.w.name + 'の残高'}が ${en(ws.short)} 足りないため、このままでは記録できません。`);
       const again = walletShortfall();
       if (!charged || (again && again.short > 0)) {
         if (charged) toast(`まだ ${en(again.short)} 足りません`);
@@ -1116,7 +1135,7 @@
     else if (tx.type === 'expense') sub.push(methodName(tx.method));
     if (tx.hours && tx.hours.length) sub.push(hoursText(tx.hours));
     if (L.isSavings(tx)) sub.push('使えるお金には含めません');
-    if (L.isPrepaidUse(state, tx)) sub.push('チャージ時に支出済み');
+    if (L.isPrepaidUse(state, tx)) sub.push(tx.method === 'cash' ? '引き出し時に支出済み' : 'チャージ時に支出済み');
     if (L.txPoints(tx)) sub.push(`${tx.pointRate}%還元 +${num(L.txPoints(tx))}P`);
     return `<li class="tap" data-edit="${esc(tx.id)}">
       <div class="ic-wrap">${catIcon(cat, 34)}</div>
@@ -1222,11 +1241,11 @@
 
     const byMethod = {};
     exp.forEach((t) => {
-      const key = findCard(t.method) || findWallet(t.method) ? t.method : 'cash';
+      const key = findCard(t.method) || findWallet(t.method) || t.method === 'bank' ? t.method : 'cash';
       byMethod[key] = (byMethod[key] || 0) + Number(t.amount);
     });
-    const methodRows = ['cash']
-      .concat((state.wallets || []).map((w) => w.id))
+    const methodRows = ['cash', 'bank']
+      .concat((state.wallets || []).map((w) => w.id).filter((id) => id !== 'cash'))
       .concat(state.cards.map((c) => c.id))
       .filter((id) => byMethod[id])
       .map((id) => `<li><div class="grow">${esc(methodName(id))}</div><div>${en(byMethod[id])}</div></li>`)
@@ -1270,7 +1289,10 @@
         <p class="small muted" style="margin:8px 0 0">収入の「貯蓄」で記録した分です。使えるお金には入りません。</p>
       </div>
       <div class="card"><h3>支払方法別</h3><ul class="list">${methodRows || '<li class="small muted">記録がありません</li>'}</ul>
-        ${activeWallets().map((w) => `<p class="small muted" style="margin:8px 0 0">${esc(w.name)}の今の残高:${en(L.walletBalance(state, w))}</p>`).join('')}</div>
+        ${activeWallets()
+          .filter((w) => w.id !== 'cash' || cashTracked())
+          .map((w) => `<p class="small muted" style="margin:8px 0 0">${w.id === 'cash' ? '財布' : esc(w.name)}の今の残高:${en(L.walletBalance(state, w))}</p>`)
+          .join('')}</div>
       <div class="card"><h3>この月の引落・入金予定</h3><ul class="list">${scheduleItems(s, L.today()) || '<li class="small muted">ありません</li>'}</ul></div>
       ${bankReport()}`;
   }
@@ -1397,13 +1419,14 @@
             (w) => `<div class="sub-card">
             <div class="form-grid">
               <label>名前<input type="text" id="wallet-${esc(w.id)}" data-wallet="${esc(w.id)}" value="${esc(w.name)}" maxlength="12"></label>
-              <label>今の残高<input type="number" id="wallet-bal-${esc(w.id)}" data-wallet-balance="${esc(w.id)}" inputmode="numeric" value="${L.walletBalance(state, w)}"></label>
+              <label>${w.id === 'cash' ? '財布の今の残高' : '今の残高'}<input type="number" id="wallet-bal-${esc(w.id)}" data-wallet-balance="${esc(w.id)}" inputmode="numeric" value="${w.chargeFrom === 'bank' && !w.since ? '' : L.walletBalance(state, w)}"></label>
               <label class="full">チャージ元<select id="wallet-from-${esc(w.id)}" data-wallet-from="${esc(w.id)}">
                 <option value="" ${!w.chargeFrom ? 'selected' : ''}>メイン口座(お店で使ったときに支出)</option>
+                <option value="bank" ${w.chargeFrom === 'bank' ? 'selected' : ''}>メイン口座(入れた・引き出した時点で支出)</option>
                 ${activeCards().map((c) => `<option value="${esc(c.id)}" ${w.chargeFrom === c.id ? 'selected' : ''}>${esc(c.name)}(チャージした時点で支出)</option>`).join('')}
               </select></label>
             </div>
-            <div class="row-actions"><button type="button" class="btn small danger" data-del-wallet="${esc(w.id)}">削除</button></div>
+            ${w.id === 'cash' ? (w.since ? '' : '<p class="small" style="margin:6px 0 0">財布の今の残高を入れると、現金の管理を始めます(ATM で引き出した時点で支出、現金で払ったときは財布の残高が減るだけ)。それまでは、現金で払ったときに支出になります。</p>') : `<div class="row-actions"><button type="button" class="btn small danger" data-del-wallet="${esc(w.id)}">削除</button></div>`}
           </div>`
           )
           .join('')}
@@ -1539,9 +1562,23 @@
       c[t.dataset.cf] = t.dataset.cf === 'name' ? t.value.trim() || 'カテゴリー' : t.value;
       rerender = t.dataset.cf !== 'name';
     } else if (t.dataset.walletFrom) {
-      findWallet(t.dataset.walletFrom).chargeFrom = t.value || undefined;
+      const w = findWallet(t.dataset.walletFrom);
+      const before = L.walletBalance(state, w);
+      w.chargeFrom = t.value || undefined;
+      // 変えた時点から新しい扱いにする(それより前の支払いは今までどおり)。残高はそのまま引き継ぐ
+      if (t.value && !w.since) {
+        w.since = new Date().toISOString();
+        w.balanceAdjust = (Number(w.balanceAdjust) || 0) + before - L.walletBalance(state, w);
+      }
+      rerender = true;
     } else if (t.dataset.walletBalance) {
       const w = findWallet(t.dataset.walletBalance);
+      // 現金は、財布の残高を初めて入れた時点から管理を始める(それより前の記録は残高に数えない)
+      if (w.chargeFrom === 'bank' && !w.since) {
+        w.since = new Date().toISOString();
+        w.balanceAdjust = 0;
+        rerender = true;
+      }
       w.balanceAdjust = (Number(w.balanceAdjust) || 0) + (Math.round(Number(t.value) || 0) - L.walletBalance(state, w));
     } else if (t.dataset.wallet) {
       findWallet(t.dataset.wallet).name = t.value.trim() || 'コード決済';
