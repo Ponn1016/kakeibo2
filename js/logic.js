@@ -284,7 +284,7 @@
     const recurringTotal = recurring.reduce((s, r) => s + r.amount, 0);
     const extraIncome = txs.filter((t) => t.type === 'income' && !isSavings(t)).reduce((s, t) => s + Number(t.amount), 0);
 
-    const expensesInMonth = txs.filter((t) => t.type === 'expense');
+    const expensesInMonth = txs.filter((t) => t.type === 'expense' && !isPrepaidUse(state, t));
     const cashSpent = expensesInMonth.filter((t) => !isCard(state, t.method)).reduce((s, t) => s + Number(t.amount), 0);
     const cardUsed = expensesInMonth.filter((t) => isCard(state, t.method)).reduce((s, t) => s + Number(t.amount), 0);
     const withdrawals = cardWithdrawalsInMonth(state, mk);
@@ -451,7 +451,7 @@
       if (monthKey(t.date) !== mk) return;
       const day = get(t.date);
       day.txs.push(t);
-      if (t.type === 'expense') day.expense += Number(t.amount);
+      if (t.type === 'expense' && !isPrepaidUse(state, t)) day.expense += Number(t.amount);
       else if (t.type === 'income' && !isSavings(t)) day.income += Number(t.amount);
       // type 'charge'(コード決済へのチャージ)は自分のお金の移動なので、収入にも支出にも数えない
     });
@@ -564,11 +564,23 @@
   function walletBalance(state, wallet) {
     let bal = Number(wallet.balanceAdjust) || 0;
     (state.transactions || []).forEach((t) => {
+      // カードからのチャージは、そのカードの支出(chargeTo にコード決済の id)として記録している
+      if (t.type === 'expense' && t.chargeTo === wallet.id) bal += Number(t.amount);
       if (t.method !== wallet.id) return;
       if (t.type === 'charge') bal += Number(t.amount);
       else if (t.type === 'expense') bal -= Number(t.amount);
     });
     return bal;
+  }
+
+  /*
+   * カードからチャージするコード決済(Suica など。wallet.chargeFrom にカードの id)での支払いか。
+   * チャージした時点でカードの支出として数えているので、支払いは残高を減らすだけで支出には数えない
+   */
+  function isPrepaidUse(state, t) {
+    if (t.type !== 'expense') return false;
+    const w = (state.wallets || []).find((x) => x.id === t.method);
+    return !!(w && w.chargeFrom && isCard(state, w.chargeFrom));
   }
 
   /*
@@ -624,6 +636,7 @@
     dailyTotals,
     suggestPayment,
     walletBalance,
+    isPrepaidUse,
     workMinutes,
     hourlyAmount,
     hourlyTotal,

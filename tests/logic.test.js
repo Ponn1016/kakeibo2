@@ -228,3 +228,33 @@ test('ポイント還元(7%)', () => {
   s.transactions.forEach((t) => delete t.pointRate);
   assert.equal(L.monthSummary(s, '2026-10', '2026-10-12').remaining, withPoints);
 });
+
+test('カードからチャージする電子マネー(Suica)は、チャージ時に支出として数える', () => {
+  const s = state({
+    settings: { savingsGoal: 0, bank: { balance: 100000, asOf: '2026-10-01', updatedAt: '2026-10-01T00:00:00.000Z' } },
+    incomes: [],
+    wallets: [{ id: 'suica', name: 'Suica', chargeFrom: 'b' }, { id: 'paypay', name: 'PayPay' }],
+    transactions: [
+      { id: 1, type: 'income', date: '2026-10-01', amount: 50000, method: 'cash', category: 'inc-other' },
+      // Suica にカードB(末日締め翌月27日払い)から 3,000円チャージ → その時点でカードBの支出
+      { id: 2, type: 'expense', date: '2026-10-05', amount: 3000, method: 'b', category: 'other', chargeTo: 'suica', createdAt: '2026-10-05T00:00:00.000Z' },
+      // Suica で 500円払う → 残高が減るだけ
+      { id: 3, type: 'expense', date: '2026-10-06', amount: 500, method: 'suica', category: 'other' },
+      // PayPay は口座からチャージ(移動)、使ったときに支出
+      { id: 4, type: 'charge', date: '2026-10-06', amount: 1000, method: 'paypay', createdAt: '2026-10-06T00:00:00.000Z' },
+      { id: 5, type: 'expense', date: '2026-10-07', amount: 400, method: 'paypay', category: 'food' }
+    ]
+  });
+  const sum = L.monthSummary(s, '2026-10', '2026-10-07');
+  assert.equal(sum.spent, 3000 + 400);
+  assert.equal(sum.cardUsed, 3000);
+  assert.equal(L.walletBalance(s, s.wallets[0]), 2500);
+  assert.equal(L.walletBalance(s, s.wallets[1]), 600);
+  assert.equal(L.isPrepaidUse(s, s.transactions[2]), true);
+  assert.equal(L.isPrepaidUse(s, s.transactions[4]), false);
+  assert.equal(L.dailyTotals(s, '2026-10')['2026-10-06'].expense, 0);
+  // 口座の見通し:Suica のチャージはカードの引落(11/27)として、PayPay のチャージは口座からのチャージとして引く
+  const b = L.bankOutlook(s);
+  assert.deepEqual(b.withdrawals.map((w) => [w.date, w.amount]), [['2026-11-27', 3000]]);
+  assert.equal(b.chargesSince, 1000);
+});

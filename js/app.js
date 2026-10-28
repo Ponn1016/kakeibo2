@@ -51,7 +51,8 @@
         { id: 'cardB', name: '三井住友NL', closingDay: 31, paymentMonthOffset: 1, paymentDay: 26, holidayAdjust: 'next', monthlyLimit: 0 }
       ],
       // コード決済・電子マネー。口座からチャージして使うので、使った日に支払ったものとして扱う
-      wallets: [{ id: 'paypay', name: 'PayPay' }],
+      // chargeFrom にカードの id があると、そのカードからチャージする(チャージした時点で支出)。なければメイン口座から
+      wallets: [{ id: 'paypay', name: 'PayPay' }, { id: 'suica', name: 'Suica', chargeFrom: 'cardB' }],
       // 毎月決まった額の収入。金額 0 のあいだは使わない
       incomes: [{ id: 'fixed-income', name: '固定収入', amount: 0, day: 25, holidayAdjust: 'prev' }],
       incomeOverrides: {},
@@ -121,10 +122,17 @@
         income = withCategoryAfter(income, 'transport-inc', 'salary');
         settings.addedIncomeTransport = true;
       }
+      // Suica(三井住友NLからチャージ)も、以前のデータに1回だけ足す
+      let wallets = Array.isArray(data.wallets) ? data.wallets : base.wallets;
+      if (!settings.addedSuica) {
+        if (!wallets.some((w) => w.id === 'suica')) wallets = wallets.concat(base.wallets.filter((w) => w.id === 'suica'));
+        settings.addedSuica = true;
+      }
       return {
         ...base,
         ...data,
         settings,
+        wallets,
         categories: {
           expense: Array.isArray(cats.expense) && typeof cats.expense[0] === 'object' ? cats.expense : base.categories.expense,
           income
@@ -510,7 +518,8 @@
 
   // work: 時給ごとの入力中の時間と分 { "1830": { h: "7", m: "30" }, ... }
   // point: この支出をポイント還元(7%還元など)の対象にするか
-  const form = { editingId: null, type: 'expense', date: L.today(), amount: '', category: null, method: 'cash', memo: '', work: {}, incomeMode: 'hourly', point: false };
+  // pointRate: この支出の還元率(%)。オンにしたときはメニューの初期値が入る
+  const form = { editingId: null, type: 'expense', date: L.today(), amount: '', category: null, method: 'cash', memo: '', work: {}, incomeMode: 'hourly', point: false, pointRate: '' };
   let methodTouched = false;
   let returnView = 'home'; // 編集を終えたときに戻る画面
 
@@ -524,6 +533,7 @@
     form.work = {};
     form.incomeMode = state.settings.incomeMode || 'hourly';
     form.point = false;
+    form.pointRate = '';
     methodTouched = false;
   }
 
@@ -546,7 +556,8 @@
         })
       ),
       incomeMode: tx.hours && tx.hours.length ? 'hourly' : 'amount',
-      point: Number(tx.pointRate) > 0
+      point: Number(tx.pointRate) > 0,
+      pointRate: Number(tx.pointRate) > 0 ? String(tx.pointRate) : ''
     });
     methodTouched = true;
     show('input');
@@ -727,21 +738,38 @@
     return Number(state.settings.pointRate) || 0;
   }
 
-  // カード払いのときに出す「○%還元の対象」ボタン。押すと金額 × 率のポイント(目安)を記録する
+  // カード払いのときに出す「還元の対象」ボタン。オンにすると還元率(初期値はメニューの値)を入れられる
   function renderPointToggle() {
     const row = $('#point-row');
-    row.hidden = !(form.type === 'expense' && findCard(form.method) && pointRate() > 0);
+    row.hidden = !(form.type === 'expense' && findCard(form.method));
     if (row.hidden) return;
     const btn = $('#point-toggle');
-    const pts = L.txPoints({ type: 'expense', amount: Number(form.amount) || 0, pointRate: pointRate() });
     btn.classList.toggle('active', form.point);
     btn.setAttribute('aria-pressed', String(form.point));
-    btn.innerHTML = `${form.point ? '✓ ' : ''}${pointRate()}%還元の対象${form.point && pts ? ` <b>+${num(pts)}P</b>` : ''}`;
+    btn.textContent = form.point ? '✓ 還元の対象' : `${pointRate()}%還元の対象`;
+    $('#point-rate-wrap').hidden = !form.point;
+    if (form.point && $('#point-rate').value !== form.pointRate) $('#point-rate').value = form.pointRate;
+    updatePointPreview();
+  }
+
+  function updatePointPreview() {
+    const pts = L.txPoints({ type: 'expense', amount: Number(form.amount) || 0, pointRate: Number(form.pointRate) || 0 });
+    $('#point-pts').textContent = pts ? '+' + num(pts) + 'P' : '';
   }
 
   $('#point-toggle').addEventListener('click', () => {
     form.point = !form.point;
+    if (form.point && !(Number(form.pointRate) > 0)) form.pointRate = String(pointRate() || '');
     renderPointToggle();
+  });
+
+  $('#point-rate').addEventListener('input', (e) => {
+    // 数字と小数点1つだけ、100% まで
+    let v = e.target.value.replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1');
+    if (Number(v) > 100) v = '100';
+    e.target.value = v;
+    form.pointRate = v;
+    updatePointPreview();
   });
 
   // コード決済を選んだときの残高とチャージ
@@ -770,13 +798,23 @@
 
   // チャージ額を聞いて記録する。記録したら true
   async function recordCharge(w, suggest, message) {
-    const amount = await ask(`${message ? message + '\n' : ''}${w.name}にチャージした金額(${mdw(form.date)})\n口座からの移動なので、あと使えるお金は減りません。`, {
+    const card = w.chargeFrom ? findCard(w.chargeFrom) : null;
+    const note = card
+      ? `${card.name}からのチャージなので、チャージした時点で支出として数えます(${mdw(L.withdrawalDateFor(card, form.date))} 引落)。`
+      : '口座からの移動なので、あと使えるお金は減りません。';
+    const amount = await ask(`${message ? message + '\n' : ''}${w.name}にチャージした金額(${mdw(form.date)})\n${note}`, {
       withInput: true,
       value: suggest,
       okLabel: '記録する'
     });
     if (!amount) return false;
-    state.transactions.push({ id: uid(), createdAt: new Date().toISOString(), type: 'charge', date: form.date, amount, method: w.id, memo: '' });
+    const base = { id: uid(), createdAt: new Date().toISOString(), date: form.date, amount };
+    if (card) {
+      // カードの支出として記録し、chargeTo で電子マネーの残高に足す
+      state.transactions.push({ ...base, type: 'expense', method: card.id, category: 'other', memo: w.name + 'チャージ', chargeTo: w.id });
+    } else {
+      state.transactions.push({ ...base, type: 'charge', method: w.id, memo: '' });
+    }
     save();
     toast(`チャージを記録しました(残高 ${en(L.walletBalance(state, w))})`);
     renderMethods();
@@ -921,7 +959,7 @@
       memo: form.memo.trim()
     };
     if (isHourly()) data.hours = hourlyRows();
-    if (data.type === 'expense' && findCard(data.method) && form.point && pointRate() > 0) data.pointRate = pointRate();
+    if (data.type === 'expense' && findCard(data.method) && form.point && Number(form.pointRate) > 0) data.pointRate = Number(form.pointRate);
     if (form.editingId) {
       const tx = state.transactions.find((t) => t.id === form.editingId);
       delete tx.hours;
@@ -943,6 +981,7 @@
     form.memo = '';
     form.work = {};
     form.point = false;
+    form.pointRate = '';
     methodTouched = false;
     $('#amount').blur();
     renderInput();
@@ -1054,7 +1093,7 @@
         .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
         .forEach((tx) => {
           if (tx.type === 'charge') return items.push(chargeRow(tx));
-          if (L.isSavings(tx)) return items.push(txRow(tx));
+          if (L.isSavings(tx) || L.isPrepaidUse(state, tx)) return items.push(txRow(tx));
           net += tx.type === 'income' ? Number(tx.amount) : -Number(tx.amount);
           counted++;
           items.push(txRow(tx));
@@ -1077,6 +1116,7 @@
     else if (tx.type === 'expense') sub.push(methodName(tx.method));
     if (tx.hours && tx.hours.length) sub.push(hoursText(tx.hours));
     if (L.isSavings(tx)) sub.push('使えるお金には含めません');
+    if (L.isPrepaidUse(state, tx)) sub.push('チャージ時に支出済み');
     if (L.txPoints(tx)) sub.push(`${tx.pointRate}%還元 +${num(L.txPoints(tx))}P`);
     return `<li class="tap" data-edit="${esc(tx.id)}">
       <div class="ic-wrap">${catIcon(cat, 34)}</div>
@@ -1097,7 +1137,9 @@
       .filter((tx) => tx.type !== 'charge')
       .filter((tx) => (tx.memo || '').toLowerCase().includes(ql) || findCategory(tx.category).name.toLowerCase().includes(ql))
       .sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt));
-    const total = hits.reduce((a, tx) => a + (tx.type === 'income' ? 1 : -1) * Number(tx.amount), 0);
+    const total = hits
+      .filter((tx) => !L.isPrepaidUse(state, tx) && !L.isSavings(tx))
+      .reduce((a, tx) => a + (tx.type === 'income' ? 1 : -1) * Number(tx.amount), 0);
     $('#cal-list').innerHTML = `<div class="day-head"><span>「${esc(q)}」${hits.length}件</span><span>${hits.length ? en(total) : ''}</span></div>
       <ul class="day-items">${hits.map((tx) => txRow(tx, true)).join('') || '<li class="empty">見つかりませんでした</li>'}</ul>`;
   }
@@ -1162,7 +1204,7 @@
   function renderReport() {
     const [y, m] = reportMonth.split('-').map(Number);
     const txs = state.transactions.filter((t) => L.monthKey(t.date) === reportMonth);
-    const exp = txs.filter((t) => t.type === 'expense');
+    const exp = txs.filter((t) => t.type === 'expense' && !L.isPrepaidUse(state, t));
     const total = exp.reduce((a, t) => a + Number(t.amount), 0);
 
     const byCat = {};
@@ -1328,9 +1370,9 @@
       <div class="card">
         <h3>ポイント還元</h3>
         <div class="stack">
-          <label>還元率(%)<input type="number" id="set-point-rate" inputmode="decimal" min="0" step="0.1" value="${Number(st.pointRate) || 0}"></label>
+          <label>還元率の初期値(%)<input type="number" id="set-point-rate" inputmode="decimal" min="0" step="0.1" value="${Number(st.pointRate) || 0}"></label>
         </div>
-        <p class="small muted">カード払いの入力で「${Number(st.pointRate) || 0}%還元の対象」を押した支払いに、この率でポイントの目安を記録します。レポートで集計できます。</p>
+        <p class="small muted">カード払いの入力で「還元の対象」を押すと、この率が入ります。キャンペーンで率が違うときは、入力画面でその記録だけ変えられます。レポートで集計できます。</p>
       </div>
 
       <div class="card">
@@ -1356,13 +1398,17 @@
             <div class="form-grid">
               <label>名前<input type="text" id="wallet-${esc(w.id)}" data-wallet="${esc(w.id)}" value="${esc(w.name)}" maxlength="12"></label>
               <label>今の残高<input type="number" id="wallet-bal-${esc(w.id)}" data-wallet-balance="${esc(w.id)}" inputmode="numeric" value="${L.walletBalance(state, w)}"></label>
+              <label class="full">チャージ元<select id="wallet-from-${esc(w.id)}" data-wallet-from="${esc(w.id)}">
+                <option value="" ${!w.chargeFrom ? 'selected' : ''}>メイン口座(お店で使ったときに支出)</option>
+                ${activeCards().map((c) => `<option value="${esc(c.id)}" ${w.chargeFrom === c.id ? 'selected' : ''}>${esc(c.name)}(チャージした時点で支出)</option>`).join('')}
+              </select></label>
             </div>
             <div class="row-actions"><button type="button" class="btn small danger" data-del-wallet="${esc(w.id)}">削除</button></div>
           </div>`
           )
           .join('')}
         <div class="btn-row" style="margin-top:10px"><button type="button" class="btn" id="add-wallet">+ 追加</button></div>
-        <p class="small muted">お店で払ったときは、支払方法をこれにして支出を記録します。チャージは入力画面でこれを選ぶと出る「チャージを記録」から。チャージは口座からの移動なので、あと使えるお金は減りません。残高がアプリの表示とずれたら「今の残高」を実際の額に直してください。</p>
+        <p class="small muted">チャージは、入力画面でこれを選ぶと出る「チャージを記録」から。チャージ元がメイン口座なら、チャージはお金の移動で、お店で使ったときに支出になります。チャージ元がカードなら、チャージした時点でそのカードの支出になり、お店で使ったときは残高が減るだけです。残高がずれたら「今の残高」を実際の額に直してください。</p>
       </div>
 
       <div class="card">
@@ -1492,6 +1538,8 @@
       const c = state.categories[catEditType].find((x) => x.id === catEl.dataset.catId);
       c[t.dataset.cf] = t.dataset.cf === 'name' ? t.value.trim() || 'カテゴリー' : t.value;
       rerender = t.dataset.cf !== 'name';
+    } else if (t.dataset.walletFrom) {
+      findWallet(t.dataset.walletFrom).chargeFrom = t.value || undefined;
     } else if (t.dataset.walletBalance) {
       const w = findWallet(t.dataset.walletBalance);
       w.balanceAdjust = (Number(w.balanceAdjust) || 0) + (Math.round(Number(t.value) || 0) - L.walletBalance(state, w));
