@@ -44,6 +44,7 @@
         hourlyRates: [1830, 1530, 1380, 1280],
         transportPresets: [1372, 1116], // 収入「交通費」でボタンから選べる金額
         pointRate: 7, // カード払いで「還元の対象」にしたときの還元率(%)
+        payday: { day: 25, holidayAdjust: 'prev' }, // 給料がメイン口座に振り込まれる日(口座から出せるお金の区切り)
         incomeMode: 'hourly' // 収入の入力方法:'hourly'(時給×時間)/ 'amount'(金額)
       },
       cards: [
@@ -465,20 +466,21 @@
       ${demo}`;
   }
 
-  // メイン口座から出せるお金(残高 − 引落予定 − チャージ − 残しておく額)
+  // メイン口座から出せるお金(残高 − 次の給料日までの引落 − チャージ − 残しておく額)
   function bankCard() {
     const b = L.bankOutlook(state);
     if (!b) {
       return `<section class="bank-card">
         <div class="bank-label">メイン口座から出せるお金</div>
-        <p class="small" style="margin:6px 0 10px">銀行アプリで見た残高を入れると、カードの引落予定を除いて、PayPay へのチャージや ATM で出していい額がわかります。</p>
+        <p class="small" style="margin:6px 0 10px">銀行アプリで見た残高を入れると、次の給料日までのカードの引落を除いて、PayPay へのチャージや ATM で出していい額がわかります。</p>
         <button type="button" class="btn small primary" data-bank-update>口座の残高を入れる</button>
       </section>`;
     }
     return `<section class="bank-card">
       <div class="bank-head"><span class="bank-label">メイン口座から出せるお金</span><button type="button" class="btn small" data-bank-update>残高を更新</button></div>
       <div class="bank-big ${b.available < 0 ? 'minus' : ''}">${b.available < 0 ? '-' : ''}${num(Math.abs(b.available))}<span>円</span></div>
-      <p class="budget-line" style="text-align:left">残高 ${en(b.balance)}(${mdw(b.asOf)}時点)− 引落予定 ${en(b.pendingWithdrawals)}${b.chargesSince ? ' − チャージ ' + en(b.chargesSince) : ''}${b.reserve ? ' − 残しておく ' + en(b.reserve) : ''}</p>
+      <p class="budget-line" style="text-align:left">残高 ${en(b.balance)}(${mdw(b.asOf)}時点)− ${mdw(b.payday)}の給料日までの引落 ${en(b.pendingWithdrawals)}${b.chargesSince ? ' − チャージ・引き出し ' + en(b.chargesSince) : ''}${b.reserve ? ' − 残しておく ' + en(b.reserve) : ''}</p>
+      ${b.stale ? '<p class="small" style="margin:6px 0 0;color:var(--warn)">残高を入れた後に給料日が過ぎています。給料が入った残高に更新してください。</p>' : ''}
     </section>`;
   }
 
@@ -1317,7 +1319,7 @@
     if (!b) return '';
     const rows = [`<li><div class="small" style="width:66px">${mdw(b.asOf)}</div><div class="grow">残高</div><div>${en(b.balance)}</div></li>`];
     if (b.chargesSince) {
-      rows.push(`<li><div class="small" style="width:66px"></div><div class="grow">チャージ(残高を入れた後)</div><div class="expense">-${en(b.chargesSince)}</div></li>`);
+      rows.push(`<li><div class="small" style="width:66px"></div><div class="grow">チャージ・引き出し(残高を入れた後)</div><div class="expense">-${en(b.chargesSince)}</div></li>`);
     }
     b.withdrawals.forEach((w) =>
       rows.push(`<li><div class="small" style="width:66px">${mdw(w.date)}</div><div class="grow">${esc(w.name)} 引落<div class="small muted">残高 ${en(w.balanceAfter)}</div></div><div class="expense">-${en(w.amount)}</div></li>`)
@@ -1325,8 +1327,10 @@
     if (b.reserve) rows.push(`<li><div class="small" style="width:66px"></div><div class="grow">残しておく額</div><div>-${en(b.reserve)}</div></li>`);
     return `<div class="card"><h3>メイン口座の見通し</h3>
       <ul class="list">${rows.join('')}</ul>
-      <div class="rows" style="margin-top:6px"><div class="total">出せるお金</div><div class="total">${en(b.available)}</div></div>
-      <p class="small muted" style="margin:8px 0 0">引落予定は、カード払いで記録した分から計算しています。残高を入れた日の引落は、まだ落ちていないものとして引いています。</p>
+      <div class="rows" style="margin-top:6px"><div class="total">出せるお金(${mdw(b.payday)}の給料日まで)</div><div class="total">${en(b.available)}</div></div>
+      ${b.laterWithdrawals.length ? `<div class="small muted" style="margin:10px 0 4px">給料日より後の引落(その給料で払う前提で、上では引いていません)</div>
+      <ul class="list">${b.laterWithdrawals.map((w) => `<li><div class="small" style="width:66px">${mdw(w.date)}</div><div class="grow">${esc(w.name)} 引落</div><div class="muted">${en(w.amount)}</div></li>`).join('')}</ul>` : ''}
+      <p class="small muted" style="margin:8px 0 0">引落予定は、カード払いで記録した分から計算しています。残高を入れた日の引落は、まだ落ちていないものとして引いています。給料日はメニューで変えられます。</p>
     </div>`;
   }
 
@@ -1484,6 +1488,11 @@
         <div class="stack">
           <p class="small muted" style="margin:0">あと使えるお金 = 先月からの繰越 + 今月の収入 − 今月の支出 − 最低限残しておく額。使わなかった分は翌月に繰り越します。</p>
           <label>最低限残しておく額(あと使えるお金から先に除く)<input type="number" id="set-savings" inputmode="numeric" min="0" value="${Number(st.savingsGoal) || 0}"></label>
+          <p class="small muted" style="margin:0">メイン口座から出せるお金は、次の給料日の前日までに落ちるカード代だけを引きます。</p>
+          <div class="form-grid">
+            <label>メイン口座の給料日<select id="set-payday-day">${dayOptions(st.payday.day)}</select></label>
+            <label>休日の場合<select id="set-payday-adjust">${adjustOptions(st.payday.holidayAdjust)}</select></label>
+          </div>
           <label>カード払いの計上月<select id="set-basis">
             <option value="accrual" ${st.basis !== 'cash' ? 'selected' : ''}>使った月に計上(使いすぎ防止向き)</option>
             <option value="cash" ${st.basis === 'cash' ? 'selected' : ''}>引き落とされる月に計上(口座残高向き)</option>
@@ -1594,6 +1603,11 @@
       state.settings.savingsAdjust = adjust + (Math.round(Number(t.value) || 0) - L.savingsBalance(state));
     } else if (t.id === 'set-savings') {
       state.settings.savingsGoal = Math.max(0, Number(t.value) || 0);
+    } else if (t.id === 'set-payday-day' || t.id === 'set-payday-adjust') {
+      state.settings.payday = {
+        day: Number($('#set-payday-day').value) || 25,
+        holidayAdjust: $('#set-payday-adjust').value || 'prev'
+      };
     } else if (t.id === 'set-basis') {
       state.settings.basis = t.value;
     } else if (t.id === 'import-file') {
