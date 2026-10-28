@@ -181,3 +181,111 @@ test('使い始めの残高と未払いカード代を記録して繰り越す�
   assert.equal(L.savingsBalance(s), 303000);
   assert.equal(L.dailyTotals(s, '2026-10')['2026-10-27'].income, 0);
 });
+test('メイン口座の見通し', () => {
+  const s = state({
+    settings: { savingsGoal: 10000, bank: { balance: 200000, asOf: '2026-10-27', updatedAt: '2026-10-27T09:00:00.000Z' } },
+    transactions: [
+      { id: 1, type: 'expense', date: '2026-10-01', amount: 30000, method: 'a' }, // 締め 10/15 → 11/10 引落
+      { id: 2, type: 'expense', date: '2026-10-20', amount: 8000, method: 'a' }, // 締め 11/15 → 12/10 引落
+      { id: 3, type: 'expense', date: '2026-09-01', amount: 5000, method: 'a' }, // 10/13 引落(残高に反映済み)
+      { id: 4, type: 'expense', date: '2026-10-25', amount: 2000, method: 'cash' }, // 現金は関係なし
+      { id: 5, type: 'charge', date: '2026-10-27', amount: 1000, method: 'paypay', createdAt: '2026-10-27T08:00:00.000Z' }, // 残高を入れる前
+      { id: 6, type: 'charge', date: '2026-10-27', amount: 3000, method: 'paypay', createdAt: '2026-10-27T10:00:00.000Z' } // 残高を入れた後
+    ]
+  });
+  const b = L.bankOutlook(s);
+  assert.equal(b.pendingWithdrawals, 38000);
+  assert.equal(b.chargesSince, 3000);
+  assert.equal(b.available, 200000 - 38000 - 3000 - 10000);
+  assert.deepEqual(b.withdrawals.map((w) => [w.date, w.amount, w.balanceAfter]), [
+    ['2026-11-10', 30000, 167000],
+    ['2026-12-10', 8000, 159000]
+  ]);
+  // 残高を入れた日と同じ日の引落は、まだ落ちていないものとして引く
+  s.settings.bank.asOf = '2026-11-10';
+  assert.equal(L.bankOutlook(s).pendingWithdrawals, 38000);
+  s.settings.bank.asOf = '2026-11-11';
+  assert.equal(L.bankOutlook(s).pendingWithdrawals, 8000);
+  // 残高が未入力なら null
+  assert.equal(L.bankOutlook(state()), null);
+});
+
+test('ポイント還元(7%)', () => {
+  const s = state({
+    transactions: [
+      { id: 1, type: 'expense', date: '2026-10-10', amount: 1200, method: 'b', pointRate: 7 }, // 84P
+      { id: 2, type: 'expense', date: '2026-10-11', amount: 498, method: 'b', pointRate: 7 }, // 34.86 → 34P
+      { id: 3, type: 'expense', date: '2026-10-12', amount: 1000, method: 'b' }, // 対象外
+      { id: 4, type: 'expense', date: '2026-09-30', amount: 300, method: 'b', pointRate: 7 } // 21P(先月)
+    ]
+  });
+  assert.equal(L.txPoints(s.transactions[0]), 84);
+  assert.equal(L.txPoints(s.transactions[1]), 34);
+  assert.equal(L.txPoints(s.transactions[2]), 0);
+  assert.deepEqual(L.pointsSummary(s, '2026-10'), { month: 118, monthCount: 2, monthAmount: 1698, total: 139 });
+  // ポイントはあと使えるお金に影響しない
+  const withPoints = L.monthSummary(s, '2026-10', '2026-10-12').remaining;
+  s.transactions.forEach((t) => delete t.pointRate);
+  assert.equal(L.monthSummary(s, '2026-10', '2026-10-12').remaining, withPoints);
+});
+
+test('カードからチャージする電子マネー(Suica)は、チャージ時に支出として数える', () => {
+  const s = state({
+    settings: { savingsGoal: 0, bank: { balance: 100000, asOf: '2026-10-01', updatedAt: '2026-10-01T00:00:00.000Z' } },
+    incomes: [],
+    wallets: [{ id: 'suica', name: 'Suica', chargeFrom: 'b' }, { id: 'paypay', name: 'PayPay' }],
+    transactions: [
+      { id: 1, type: 'income', date: '2026-10-01', amount: 50000, method: 'cash', category: 'inc-other' },
+      // Suica にカードB(末日締め翌月27日払い)から 3,000円チャージ → その時点でカードBの支出
+      { id: 2, type: 'expense', date: '2026-10-05', amount: 3000, method: 'b', category: 'other', chargeTo: 'suica', createdAt: '2026-10-05T00:00:00.000Z' },
+      // Suica で 500円払う → 残高が減るだけ
+      { id: 3, type: 'expense', date: '2026-10-06', amount: 500, method: 'suica', category: 'other' },
+      // PayPay は口座からチャージ(移動)、使ったときに支出
+      { id: 4, type: 'charge', date: '2026-10-06', amount: 1000, method: 'paypay', createdAt: '2026-10-06T00:00:00.000Z' },
+      { id: 5, type: 'expense', date: '2026-10-07', amount: 400, method: 'paypay', category: 'food' }
+    ]
+  });
+  const sum = L.monthSummary(s, '2026-10', '2026-10-07');
+  assert.equal(sum.spent, 3000 + 400);
+  assert.equal(sum.cardUsed, 3000);
+  assert.equal(L.walletBalance(s, s.wallets[0]), 2500);
+  assert.equal(L.walletBalance(s, s.wallets[1]), 600);
+  assert.equal(L.isPrepaidUse(s, s.transactions[2]), true);
+  assert.equal(L.isPrepaidUse(s, s.transactions[4]), false);
+  assert.equal(L.dailyTotals(s, '2026-10')['2026-10-06'].expense, 0);
+  // 口座の見通し:Suica のチャージはカードの引落(11/27)として、PayPay のチャージは口座からのチャージとして引く
+  const b = L.bankOutlook(s);
+  assert.deepEqual(b.withdrawals.map((w) => [w.date, w.amount]), [['2026-11-27', 3000]]);
+  assert.equal(b.chargesSince, 1000);
+});
+
+test('現金(ATM で引き出した時点で支出、財布の残高を管理)', () => {
+  const s = state({
+    settings: { savingsGoal: 0, bank: { balance: 100000, asOf: '2026-10-01', updatedAt: '2026-10-01T00:00:00.000Z' } },
+    incomes: [],
+    wallets: [{ id: 'cash', name: '現金', chargeFrom: 'bank' }],
+    transactions: [
+      { id: 1, type: 'income', date: '2026-10-01', amount: 50000, method: 'cash', category: 'inc-other', createdAt: '2026-10-01T00:00:00.000Z' },
+      { id: 2, type: 'expense', date: '2026-10-02', amount: 700, method: 'cash', createdAt: '2026-10-02T00:00:00.000Z' } // 管理を始める前
+    ]
+  });
+  // 財布の残高を入れる前は、これまでどおり現金で使ったときに支出
+  assert.equal(L.isPrepaidUse(s, s.transactions[1]), false);
+  assert.equal(L.monthSummary(s, '2026-10', '2026-10-02').spent, 700);
+
+  // 10/3 に財布の残高 2,000円 を入れて管理を始める
+  s.wallets[0].since = '2026-10-03T00:00:00.000Z';
+  s.wallets[0].balanceAdjust = 2000;
+  s.transactions.push(
+    // ATM で 10,000円 引き出し → その時点で支出、口座からも出る
+    { id: 3, type: 'expense', date: '2026-10-04', amount: 10000, method: 'bank', chargeTo: 'cash', createdAt: '2026-10-04T00:00:00.000Z' },
+    // 現金で 1,200円 → 財布の残高が減るだけ
+    { id: 4, type: 'expense', date: '2026-10-05', amount: 1200, method: 'cash', createdAt: '2026-10-05T00:00:00.000Z' }
+  );
+  assert.equal(L.walletBalance(s, s.wallets[0]), 2000 + 10000 - 1200);
+  assert.equal(L.isPrepaidUse(s, s.transactions[1]), false); // 始める前の記録はそのまま
+  assert.equal(L.isPrepaidUse(s, s.transactions[3]), true);
+  const sum = L.monthSummary(s, '2026-10', '2026-10-05');
+  assert.equal(sum.spent, 700 + 10000);
+  assert.equal(L.bankOutlook(s).chargesSince, 10000);
+});

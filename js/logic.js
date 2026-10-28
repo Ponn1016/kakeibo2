@@ -284,7 +284,7 @@
     const recurringTotal = recurring.reduce((s, r) => s + r.amount, 0);
     const extraIncome = txs.filter((t) => t.type === 'income' && !isSavings(t)).reduce((s, t) => s + Number(t.amount), 0);
 
-    const expensesInMonth = txs.filter((t) => t.type === 'expense');
+    const expensesInMonth = txs.filter((t) => t.type === 'expense' && !isPrepaidUse(state, t));
     const cashSpent = expensesInMonth.filter((t) => !isCard(state, t.method)).reduce((s, t) => s + Number(t.amount), 0);
     const cardUsed = expensesInMonth.filter((t) => isCard(state, t.method)).reduce((s, t) => s + Number(t.amount), 0);
     const withdrawals = cardWithdrawalsInMonth(state, mk);
@@ -321,6 +321,73 @@
   function savingsBalance(state) {
     const adjust = Number((state.settings || {}).savingsAdjust) || 0;
     return (state.transactions || []).filter(isSavings).reduce((s, t) => s + Number(t.amount), adjust);
+  }
+
+  /*
+   * ポイント還元(7%還元など)。tx.pointRate(%)が付いた支出の 金額 × 率 の1ポイント未満切り捨て(目安)
+   */
+  function txPoints(tx) {
+    if (tx.type !== 'expense' || !(Number(tx.pointRate) > 0)) return 0;
+    return Math.floor((Number(tx.amount) * Number(tx.pointRate)) / 100);
+  }
+
+  // 月(mk)のポイントと、これまでの合計
+  function pointsSummary(state, mk) {
+    const txs = (state.transactions || []).filter((t) => txPoints(t) > 0);
+    const inMonth = txs.filter((t) => monthKey(t.date) === mk);
+    return {
+      month: inMonth.reduce((s, t) => s + txPoints(t), 0),
+      monthCount: inMonth.length,
+      monthAmount: inMonth.reduce((s, t) => s + Number(t.amount), 0),
+      total: txs.reduce((s, t) => s + txPoints(t), 0)
+    };
+  }
+
+  /*
+   * メイン口座の見通し。settings.bank = { balance, asOf(残高を入れた日), updatedAt(入れた時刻) }
+   * 出せるお金 = 残高 − 残高を入れた日以降のカード引落 − 残高を入れた後に記録したチャージ − 最低限残しておく額
+   * 残高を入れた日と同じ日の引落は、まだ落ちていないものとして引く(少なめに見積もる)
+   */
+  function bankOutlook(state) {
+    const bank = (state.settings || {}).bank;
+    if (!bank || !bank.asOf) return null;
+    const balance = Number(bank.balance) || 0;
+    const reserve = Number((state.settings || {}).savingsGoal) || 0;
+
+    const map = {};
+    (state.transactions || []).forEach((tx) => {
+      if (tx.type !== 'expense' || !isCard(state, tx.method)) return;
+      const card = findCard(state, tx.method);
+      const wd = withdrawalDateFor(card, tx.date);
+      if (wd < bank.asOf) return;
+      const key = card.id + '|' + wd;
+      if (!map[key]) map[key] = { date: wd, name: card.name, amount: 0 };
+      map[key].amount += Number(tx.amount);
+    });
+    const withdrawals = Object.values(map).sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
+    const pendingWithdrawals = withdrawals.reduce((s, w) => s + w.amount, 0);
+
+    // 口座から出たお金:チャージ(PayPay など)と、口座から直接の支出(ATM での引き出しなど。method 'bank')
+    const chargesSince = (state.transactions || [])
+      .filter((t) => (t.type === 'charge' || (t.type === 'expense' && t.method === 'bank')) && (!bank.updatedAt || String(t.createdAt) > bank.updatedAt))
+      .reduce((s, t) => s + Number(t.amount), 0);
+
+    // 引落日ごとの残高の推移
+    let running = balance - chargesSince;
+    const timeline = withdrawals.map((w) => {
+      running -= w.amount;
+      return { ...w, balanceAfter: running };
+    });
+
+    return {
+      balance,
+      asOf: bank.asOf,
+      withdrawals: timeline,
+      pendingWithdrawals,
+      chargesSince,
+      reserve,
+      available: balance - pendingWithdrawals - chargesSince - reserve
+    };
   }
 
   /*
@@ -385,7 +452,7 @@
       if (monthKey(t.date) !== mk) return;
       const day = get(t.date);
       day.txs.push(t);
-      if (t.type === 'expense') day.expense += Number(t.amount);
+      if (t.type === 'expense' && !isPrepaidUse(state, t)) day.expense += Number(t.amount);
       else if (t.type === 'income' && !isSavings(t)) day.income += Number(t.amount);
       // type 'charge'(コード決済へのチャージ)は自分のお金の移動なので、収入にも支出にも数えない
     });
@@ -498,11 +565,30 @@
   function walletBalance(state, wallet) {
     let bal = Number(wallet.balanceAdjust) || 0;
     (state.transactions || []).forEach((t) => {
+      // 管理を始める前(wallet.since より前に記録したもの)は数えない
+      if (wallet.since && String(t.createdAt) < wallet.since) return;
+      // 支出扱いのチャージ・引き出しは、支出(chargeTo にコード決済などの id)として記録している
+      if (t.type === 'expense' && t.chargeTo === wallet.id) bal += Number(t.amount);
       if (t.method !== wallet.id) return;
       if (t.type === 'charge') bal += Number(t.amount);
       else if (t.type === 'expense') bal -= Number(t.amount);
     });
     return bal;
+  }
+
+  /*
+   * 入れた時点で支出として数える財布・電子マネーでの支払いか。
+   *   wallet.chargeFrom = カードの id … カードからチャージ(Suica など)
+   *   wallet.chargeFrom = 'bank'      … メイン口座から引き出し(現金。wallet.since を入れてから管理を始める)
+   * チャージ・引き出しの時点で支出として数えているので、支払いは残高を減らすだけで支出には数えない
+   */
+  function isPrepaidUse(state, t) {
+    if (t.type !== 'expense') return false;
+    const w = (state.wallets || []).find((x) => x.id === t.method);
+    if (!w || !w.chargeFrom) return false;
+    if (w.chargeFrom === 'bank' && !w.since) return false;
+    if (w.since && String(t.createdAt) < w.since) return false;
+    return w.chargeFrom === 'bank' || isCard(state, w.chargeFrom);
   }
 
   /*
@@ -551,10 +637,14 @@
     monthSummary,
     carryOver,
     savingsBalance,
+    bankOutlook,
+    txPoints,
+    pointsSummary,
     isSavings,
     dailyTotals,
     suggestPayment,
     walletBalance,
+    isPrepaidUse,
     workMinutes,
     hourlyAmount,
     hourlyTotal,
