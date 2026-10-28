@@ -232,7 +232,16 @@ test('ポイント還元(7%)', () => {
   assert.equal(L.txPoints(s.transactions[0]), 84);
   assert.equal(L.txPoints(s.transactions[1]), 34);
   assert.equal(L.txPoints(s.transactions[2]), 0);
-  assert.deepEqual(L.pointsSummary(s, '2026-10'), { month: 118, monthCount: 2, monthAmount: 1698, total: 139 });
+  assert.deepEqual(L.pointsSummary(s, '2026-10'), {
+    month: 118, monthCount: 2, monthAmount: 1698, total: 139,
+    byMethod: [{ method: 'b', points: 118, count: 2, amount: 1698 }]
+  });
+  // Suica の交通費(2%)も同じように数え、支払方法ごとに分ける
+  s.transactions.push({ id: 5, type: 'expense', date: '2026-10-12', amount: 178, method: 'suica', pointRate: 2 }); // 3.56 → 3P
+  const ps = L.pointsSummary(s, '2026-10');
+  assert.equal(ps.month, 121);
+  assert.deepEqual(ps.byMethod.map((x) => [x.method, x.points]), [['b', 118], ['suica', 3]]);
+  s.transactions.pop();
   // ポイントはあと使えるお金に影響しない
   const withPoints = L.monthSummary(s, '2026-10', '2026-10-12').remaining;
   s.transactions.forEach((t) => delete t.pointRate);

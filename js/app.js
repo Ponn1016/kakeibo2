@@ -55,7 +55,8 @@
       // コード決済・電子マネー。口座からチャージして使うので、使った日に支払ったものとして扱う
       // chargeFrom にカードの id があると、そのカードからチャージする(チャージした時点で支出)。なければメイン口座から
       // chargeFrom が 'bank' なら、メイン口座から引き出した時点で支出(現金。財布の残高を入れてから管理を始める)
-      wallets: [{ id: 'paypay', name: 'PayPay' }, { id: 'suica', name: 'Suica', chargeFrom: 'cardB' }, { id: 'cash', name: '現金', chargeFrom: 'bank' }],
+      // pointRate があると、その支払いを「還元の対象」にできる(Suica は交通費で 2% など)
+      wallets: [{ id: 'paypay', name: 'PayPay' }, { id: 'suica', name: 'Suica', chargeFrom: 'cardB', pointRate: 2 }, { id: 'cash', name: '現金', chargeFrom: 'bank' }],
       // 毎月決まった額の収入。金額 0 のあいだは使わない
       incomes: [{ id: 'fixed-income', name: '固定収入', amount: 0, day: 25, holidayAdjust: 'prev' }],
       incomeOverrides: {},
@@ -130,6 +131,11 @@
       if (!settings.addedSuica) {
         if (!wallets.some((w) => w.id === 'suica')) wallets = wallets.concat(base.wallets.filter((w) => w.id === 'suica'));
         settings.addedSuica = true;
+      }
+      // Suica の還元率(2%)も、以前のデータに1回だけ入れる
+      if (!settings.addedSuicaPoint) {
+        wallets = wallets.map((w) => (w.id === 'suica' && w.pointRate === undefined ? { ...w, pointRate: 2 } : w));
+        settings.addedSuicaPoint = true;
       }
       // 現金(財布)は支払方法の「現金」と同じ id。管理を始めるまでは今までどおり使ったときに支出
       if (!wallets.some((w) => w.id === 'cash')) wallets = wallets.concat(base.wallets.filter((w) => w.id === 'cash'));
@@ -759,19 +765,26 @@
     renderPointToggle();
   }
 
-  function pointRate() {
-    return Number(state.settings.pointRate) || 0;
+  // 支払方法ごとの還元率の初期値:カードはメニューの値、電子マネーはそれぞれの値(0 なら対象にできない)
+  function pointRate(method) {
+    if (findCard(method)) return Number(state.settings.pointRate) || 0;
+    const w = findWallet(method);
+    return (w && Number(w.pointRate)) || 0;
   }
 
-  // カード払いのときに出す「還元の対象」ボタン。オンにすると還元率(初期値はメニューの値)を入れられる
+  function pointEligible(method) {
+    return !!findCard(method) || pointRate(method) > 0;
+  }
+
+  // カード払い・還元率のある電子マネーのときに出す「還元の対象」ボタン。オンにすると還元率(初期値はメニューの値)を入れられる
   function renderPointToggle() {
     const row = $('#point-row');
-    row.hidden = !(form.type === 'expense' && findCard(form.method));
+    row.hidden = !(form.type === 'expense' && pointEligible(form.method));
     if (row.hidden) return;
     const btn = $('#point-toggle');
     btn.classList.toggle('active', form.point);
     btn.setAttribute('aria-pressed', String(form.point));
-    btn.textContent = form.point ? '✓ 還元の対象' : `${pointRate()}%還元の対象`;
+    btn.textContent = form.point ? '✓ 還元の対象' : `${pointRate(form.method)}%還元の対象`;
     $('#point-rate-wrap').hidden = !form.point;
     if (form.point && $('#point-rate').value !== form.pointRate) $('#point-rate').value = form.pointRate;
     updatePointPreview();
@@ -784,7 +797,7 @@
 
   $('#point-toggle').addEventListener('click', () => {
     form.point = !form.point;
-    if (form.point && !(Number(form.pointRate) > 0)) form.pointRate = String(pointRate() || '');
+    if (form.point && !(Number(form.pointRate) > 0)) form.pointRate = String(pointRate(form.method) || '');
     renderPointToggle();
   });
 
@@ -956,6 +969,8 @@
   $('#methods').addEventListener('click', (e) => {
     const b = e.target.closest('[data-method]');
     if (!b) return;
+    // 支払方法を変えたら、還元率はその支払方法の初期値に戻す
+    if (form.method !== b.dataset.method && form.point) form.pointRate = String(pointRate(b.dataset.method) || '');
     form.method = b.dataset.method;
     methodTouched = true;
     renderMethods();
@@ -993,7 +1008,7 @@
       memo: form.memo.trim()
     };
     if (isHourly()) data.hours = hourlyRows();
-    if (data.type === 'expense' && findCard(data.method) && form.point && Number(form.pointRate) > 0) data.pointRate = Number(form.pointRate);
+    if (data.type === 'expense' && pointEligible(data.method) && form.point && Number(form.pointRate) > 0) data.pointRate = Number(form.pointRate);
     if (form.editingId) {
       const tx = state.transactions.find((t) => t.id === form.editingId);
       delete tx.hours;
@@ -1320,9 +1335,10 @@
       <div class="rows">
         <div>この月のポイント</div><div class="total" style="border:none;padding:0">${num(p.month)}P</div>
         <div class="sub">対象の支払い ${p.monthCount}件</div><div class="sub">${en(p.monthAmount)}</div>
+        ${p.byMethod.map((x) => `<div class="sub">${esc(methodName(x.method))}(${x.count}件 ${en(x.amount)})</div><div class="sub">${num(x.points)}P</div>`).join('')}
         <div>これまでの合計</div><div>${num(p.total)}P</div>
       </div>
-      <p class="small muted" style="margin:8px 0 0">入力で「還元の対象」にしたカード払いの、金額 × 還元率(1ポイント未満切り捨て)の目安です。実際のポイントはカード会社のアプリで確認してください。</p>
+      <p class="small muted" style="margin:8px 0 0">入力で「還元の対象」にした支払い(カード・Suica など)の、金額 × 還元率(1ポイント未満切り捨て)の目安です。実際のポイントはカード会社のアプリで確認してください。</p>
     </div>`;
   }
 
@@ -1442,6 +1458,7 @@
                 <option value="bank" ${w.chargeFrom === 'bank' ? 'selected' : ''}>メイン口座(入れた・引き出した時点で支出)</option>
                 ${activeCards().map((c) => `<option value="${esc(c.id)}" ${w.chargeFrom === c.id ? 'selected' : ''}>${esc(c.name)}(チャージした時点で支出)</option>`).join('')}
               </select></label>
+              ${w.id === 'cash' ? '' : `<label class="full">還元率の初期値(%。0 なら還元の対象にしない)<input type="number" data-wallet-point="${esc(w.id)}" inputmode="decimal" min="0" max="100" step="0.1" value="${Number(w.pointRate) || 0}"></label>`}
             </div>
             ${w.id === 'cash' ? (w.since ? '' : '<p class="small" style="margin:6px 0 0">財布の今の残高を入れると、現金の管理を始めます(ATM で引き出した時点で支出、現金で払ったときは財布の残高が減るだけ)。それまでは、現金で払ったときに支出になります。</p>') : `<div class="row-actions"><button type="button" class="btn small danger" data-del-wallet="${esc(w.id)}">削除</button></div>`}
           </div>`
@@ -1584,6 +1601,8 @@
       const c = state.categories[catEditType].find((x) => x.id === catEl.dataset.catId);
       c[t.dataset.cf] = t.dataset.cf === 'name' ? t.value.trim() || 'カテゴリー' : t.value;
       rerender = t.dataset.cf !== 'name';
+    } else if (t.dataset.walletPoint) {
+      findWallet(t.dataset.walletPoint).pointRate = Math.min(100, Math.max(0, Number(t.value) || 0));
     } else if (t.dataset.walletFrom) {
       const w = findWallet(t.dataset.walletFrom);
       const before = L.walletBalance(state, w);

@@ -339,6 +339,16 @@
       month: inMonth.reduce((s, t) => s + txPoints(t), 0),
       monthCount: inMonth.length,
       monthAmount: inMonth.reduce((s, t) => s + Number(t.amount), 0),
+      // 支払方法ごと(JAL のマイル・Vポイント・JRE POINT などポイントの種類が違うので分けて見せる)
+      byMethod: Object.values(
+        inMonth.reduce((m, t) => {
+          const x = m[t.method] || (m[t.method] = { method: t.method, points: 0, count: 0, amount: 0 });
+          x.points += txPoints(t);
+          x.count += 1;
+          x.amount += Number(t.amount);
+          return m;
+        }, {})
+      ),
       total: txs.reduce((s, t) => s + txPoints(t), 0)
     };
   }
