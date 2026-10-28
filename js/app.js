@@ -68,8 +68,15 @@
   // 今日を基準にした、お試し用のサンプルデータ
   function demoState() {
     const s = defaultState();
-    s.settings.savingsGoal = 20000;
     const t = L.today();
+    s.settings.savingsGoal = 10000;
+    s.settings.savingsPlan = 10000;
+    // 口座の残高は記録より後に入れたことにする(チャージ・引き出しは残高に反映済み)
+    s.settings.bank = { balance: 98000, asOf: t, updatedAt: '2000-01-02T00:00:00.000Z' };
+    // 財布の管理は最初から(残高 2,000円 から)
+    const cash = s.wallets.find((w) => w.id === 'cash');
+    cash.since = '2000-01-01T00:00:00.000Z';
+    cash.balanceAdjust = 2000;
     const monthStart = t.slice(0, 8) + '01';
     const shift = [
       { rate: 1830, minutes: 48 * 60 },
@@ -78,24 +85,29 @@
     ];
     const rows = [
       [monthStart, 'income', L.hourlyTotal(shift), 'salary', 'cash', '先月分', shift],
+      [-45, 'income', 30000, 'extra', 'cash', '先月の手元のお金'],
+      [-40, 'expense', 12000, 'social', 'cardA', '旅行', null, { pointRate: 7 }],
       [-15, 'income', 8000, 'extra', 'cash', 'フリマ'],
       [-20, 'expense', 4800, 'fixed', 'cardB', '電気'],
       [-19, 'expense', 3200, 'fixed', 'cardB', 'スマホ'],
+      [-16, 'expense', 10000, 'other', 'bank', 'ATM引き出し', null, { chargeTo: 'cash' }],
       [-14, 'expense', 1065, 'food', 'cash', ''],
-      [-12, 'expense', 1140, 'daily', 'cardB', '洗剤'],
-      [-9, 'expense', 6300, 'social', 'cardB', '飲み会'],
-      [-8, 'expense', 3300, 'other', 'cash', '交通費'],
+      [-12, 'expense', 1140, 'daily', 'cardB', '洗剤', null, { pointRate: 7 }],
+      [-10, 'expense', 3000, 'other', 'cardB', 'Suicaチャージ', null, { chargeTo: 'suica' }],
+      [-9, 'expense', 6300, 'social', 'cardB', '飲み会', null, { pointRate: 10 }],
+      [-8, 'expense', 178, 'other', 'suica', '電車', null, { pointRate: 2 }],
+      [-8, 'expense', 178, 'other', 'suica', '電車', null, { pointRate: 2 }],
       [-6, 'expense', 2400, 'beauty', 'cardA', ''],
       [-4, 'expense', 740, 'food', 'cash', ''],
       [-2, 'expense', 1000, 'social', 'cash', ''],
       [-1, 'expense', 750, 'food', 'cash', 'ランチ'],
-      [-1, 'expense', 780, 'food', 'cardB', 'コンビニ'],
+      [-1, 'expense', 780, 'food', 'cardB', 'コンビニ', null, { pointRate: 7 }],
       [-3, 'expense', 1480, 'daily', 'paypay', 'ドラッグストア'],
       [-5, 'expense', 650, 'food', 'paypay', 'カフェ'],
       [-5, 'charge', 1000, null, 'paypay', ''],
       [-3, 'charge', 2000, null, 'paypay', '']
     ];
-    s.transactions = rows.map(([d, type, amount, category, method, memo, hours], i) => ({
+    s.transactions = rows.map(([d, type, amount, category, method, memo, hours, extra], i) => ({
       id: 'demo' + i,
       createdAt: '2000-01-01T00:00:' + L.pad(i),
       date: typeof d === 'string' ? d : L.addDays(t, d),
@@ -104,7 +116,8 @@
       category,
       method,
       memo,
-      ...(hours ? { hours } : {})
+      ...(hours ? { hours } : {}),
+      ...(extra || {})
     }));
     return s;
   }
