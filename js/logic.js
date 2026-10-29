@@ -326,9 +326,13 @@
   /*
    * ポイント還元(7%還元など)。tx.pointRate(%)が付いた支出の 金額 × 率 の1ポイント未満切り捨て(目安)
    */
+  // ポイント = 金額 × 還元率。pointUnit があると、その金額ごとに付く(Suica は 50円ごと、JAL は 100円ごと)
   function txPoints(tx) {
     if (tx.type !== 'expense' || !(Number(tx.pointRate) > 0)) return 0;
-    return Math.floor((Number(tx.amount) * Number(tx.pointRate)) / 100);
+    const unit = Number(tx.pointUnit) || 0;
+    const base = unit > 0 ? Math.floor(Number(tx.amount) / unit) * unit : Number(tx.amount);
+    // 小数の誤差で 1P 少なくならないように丸めてから切り捨てる
+    return Math.floor(Math.round(base * Number(tx.pointRate) * 1e6) / 1e8);
   }
 
   // 月(mk)のポイントと、これまでの合計
