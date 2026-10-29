@@ -236,8 +236,19 @@ test('ポイント還元(7%)', () => {
     month: 118, monthCount: 2, monthAmount: 1698, total: 139,
     byMethod: [{ method: 'b', points: 118, count: 2, amount: 1698 }]
   });
-  // Suica の交通費(2%)も同じように数え、支払方法ごとに分ける
-  s.transactions.push({ id: 5, type: 'expense', date: '2026-10-12', amount: 178, method: 'suica', pointRate: 2 }); // 3.56 → 3P
+  // 単位があるときは、その金額ごとに付く(Suica は 50円ごとに 2% = 1P、JAL は 100円ごとに 1% = 1マイル)
+  const pt = (amount, pointRate, pointUnit) => L.txPoints({ type: 'expense', amount, pointRate, pointUnit });
+  assert.equal(pt(178, 2, 50), 3); // 50円 × 3
+  assert.equal(pt(149, 2, 50), 2); // 1円単位なら 2.98 → 2P だが、単位でも 2P
+  assert.equal(pt(49, 2, 50), 0); // 50円に満たない
+  assert.equal(pt(250, 2, 50), 5);
+  assert.equal(pt(1099, 1, 100), 10); // JAL 100円ごと 1マイル
+  assert.equal(pt(1099, 2, 100), 20); // 特約店で 2% に変えた場合
+  assert.equal(pt(99, 1, 100), 0);
+  assert.equal(pt(1099, 1, 0), 10); // 単位なし(1円単位)は今までどおり
+  assert.equal(pt(1000, 0.5, 200), 5);
+  // Suica の交通費も同じように数え、支払方法ごとに分ける
+  s.transactions.push({ id: 5, type: 'expense', date: '2026-10-12', amount: 178, method: 'suica', pointRate: 2, pointUnit: 50 }); // 50円 × 3 → 3P
   const ps = L.pointsSummary(s, '2026-10');
   assert.equal(ps.month, 121);
   assert.deepEqual(ps.byMethod.map((x) => [x.method, x.points]), [['b', 118], ['suica', 3]]);

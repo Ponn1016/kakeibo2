@@ -44,19 +44,20 @@
         basis: 'accrual',
         hourlyRates: [1830, 1530, 1380, 1280],
         transportPresets: [1372, 1116], // 収入「交通費」でボタンから選べる金額
-        pointRate: 7, // カード払いで「還元の対象」にしたときの還元率(%)
+        pointRate: 7, // 還元率を設定していないカードの初期値(%)
         payday: { day: 25, holidayAdjust: 'prev' }, // 給料がメイン口座に振り込まれる日(口座から出せるお金の区切り)
         incomeMode: 'hourly' // 収入の入力方法:'hourly'(時給×時間)/ 'amount'(金額)
       },
       cards: [
-        { id: 'cardA', name: 'JALカード', closingDay: 15, paymentMonthOffset: 1, paymentDay: 10, holidayAdjust: 'next', monthlyLimit: 0 },
-        { id: 'cardB', name: '三井住友NL', closingDay: 31, paymentMonthOffset: 1, paymentDay: 26, holidayAdjust: 'next', monthlyLimit: 0 }
+        // pointRate:還元率の初期値(%)、pointUnit:何円ごとにポイントが付くか(0 なら 1円単位で計算)
+        { id: 'cardA', name: 'JALカード', closingDay: 15, paymentMonthOffset: 1, paymentDay: 10, holidayAdjust: 'next', monthlyLimit: 0, pointRate: 1, pointUnit: 100 },
+        { id: 'cardB', name: '三井住友NL', closingDay: 31, paymentMonthOffset: 1, paymentDay: 26, holidayAdjust: 'next', monthlyLimit: 0, pointRate: 7, pointUnit: 0 }
       ],
       // コード決済・電子マネー。口座からチャージして使うので、使った日に支払ったものとして扱う
       // chargeFrom にカードの id があると、そのカードからチャージする(チャージした時点で支出)。なければメイン口座から
       // chargeFrom が 'bank' なら、メイン口座から引き出した時点で支出(現金。財布の残高を入れてから管理を始める)
-      // pointRate があると、その支払いを「還元の対象」にできる(Suica は交通費で 2% など)
-      wallets: [{ id: 'paypay', name: 'PayPay' }, { id: 'suica', name: 'Suica', chargeFrom: 'cardB', pointRate: 2 }, { id: 'cash', name: '現金', chargeFrom: 'bank' }],
+      // pointRate があると、その支払いを「還元の対象」にできる(Suica は 50円ごとに 1P = 2%)
+      wallets: [{ id: 'paypay', name: 'PayPay' }, { id: 'suica', name: 'Suica', chargeFrom: 'cardB', pointRate: 2, pointUnit: 50 }, { id: 'cash', name: '現金', chargeFrom: 'bank' }],
       // 毎月決まった額の収入。金額 0 のあいだは使わない
       incomes: [{ id: 'fixed-income', name: '固定収入', amount: 0, day: 25, holidayAdjust: 'prev' }],
       incomeOverrides: {},
@@ -86,7 +87,7 @@
     const rows = [
       [monthStart, 'income', L.hourlyTotal(shift), 'salary', 'cash', '先月分', shift],
       [-45, 'income', 30000, 'extra', 'cash', '先月の手元のお金'],
-      [-40, 'expense', 12000, 'social', 'cardA', '旅行', null, { pointRate: 7 }],
+      [-40, 'expense', 12000, 'social', 'cardA', '旅行', null, { pointRate: 1, pointUnit: 100 }],
       [-15, 'income', 8000, 'extra', 'cash', 'フリマ'],
       [-20, 'expense', 4800, 'fixed', 'cardB', '電気'],
       [-19, 'expense', 3200, 'fixed', 'cardB', 'スマホ'],
@@ -95,8 +96,8 @@
       [-12, 'expense', 1140, 'daily', 'cardB', '洗剤', null, { pointRate: 7 }],
       [-10, 'expense', 3000, 'other', 'cardB', 'Suicaチャージ', null, { chargeTo: 'suica' }],
       [-9, 'expense', 6300, 'social', 'cardB', '飲み会', null, { pointRate: 10 }],
-      [-8, 'expense', 178, 'other', 'suica', '電車', null, { pointRate: 2 }],
-      [-8, 'expense', 178, 'other', 'suica', '電車', null, { pointRate: 2 }],
+      [-8, 'expense', 178, 'other', 'suica', '電車', null, { pointRate: 2, pointUnit: 50 }],
+      [-8, 'expense', 178, 'other', 'suica', '電車', null, { pointRate: 2, pointUnit: 50 }],
       [-6, 'expense', 2400, 'beauty', 'cardA', ''],
       [-4, 'expense', 740, 'food', 'cash', ''],
       [-2, 'expense', 1000, 'social', 'cash', ''],
@@ -152,11 +153,28 @@
       }
       // 現金(財布)は支払方法の「現金」と同じ id。管理を始めるまでは今までどおり使ったときに支出
       if (!wallets.some((w) => w.id === 'cash')) wallets = wallets.concat(base.wallets.filter((w) => w.id === 'cash'));
+      // ポイントの付き方を支払方法ごとにする(1回だけ):JAL は 100円ごと 1%、Suica は 50円ごと 2%、
+      // ほかのカードは今までの初期値。それまでの JAL・Suica の記録も同じ単位で数え直す(率はそのまま)
+      let cards = Array.isArray(data.cards) ? data.cards : base.cards;
+      let transactions = data.transactions;
+      if (!settings.pointsPerMethod) {
+        const units = { cardA: 100, suica: 50 };
+        cards = cards.map((c) =>
+          c.pointRate !== undefined ? c : c.id === 'cardA' ? { ...c, pointRate: 1, pointUnit: 100 } : { ...c, pointRate: Number(settings.pointRate) || 0, pointUnit: 0 }
+        );
+        wallets = wallets.map((w) => (w.id === 'suica' && w.pointUnit === undefined ? { ...w, pointUnit: 50 } : w));
+        if (Array.isArray(transactions)) {
+          transactions = transactions.map((t) => (Number(t.pointRate) > 0 && t.pointUnit === undefined && units[t.method] ? { ...t, pointUnit: units[t.method] } : t));
+        }
+        settings.pointsPerMethod = true;
+      }
       return {
         ...base,
         ...data,
         settings,
+        cards,
         wallets,
+        ...(transactions ? { transactions } : {}),
         categories: {
           expense: Array.isArray(cats.expense) && typeof cats.expense[0] === 'object' ? cats.expense : base.categories.expense,
           income
@@ -563,7 +581,7 @@
   // work: 時給ごとの入力中の時間と分 { "1830": { h: "7", m: "30" }, ... }
   // point: この支出をポイント還元(7%還元など)の対象にするか
   // pointRate: この支出の還元率(%)。オンにしたときはメニューの初期値が入る
-  const form = { editingId: null, type: 'expense', date: L.today(), amount: '', category: null, method: 'cash', memo: '', work: {}, incomeMode: 'hourly', point: false, pointRate: '' };
+  const form = { editingId: null, type: 'expense', date: L.today(), amount: '', category: null, method: 'cash', memo: '', work: {}, incomeMode: 'hourly', point: false, pointRate: '', pointUnit: 0 };
   let methodTouched = false;
   let returnView = 'home'; // 編集を終えたときに戻る画面
 
@@ -578,6 +596,7 @@
     form.incomeMode = state.settings.incomeMode || 'hourly';
     form.point = false;
     form.pointRate = '';
+    form.pointUnit = 0;
     methodTouched = false;
   }
 
@@ -601,7 +620,8 @@
       ),
       incomeMode: tx.hours && tx.hours.length ? 'hourly' : 'amount',
       point: Number(tx.pointRate) > 0,
-      pointRate: Number(tx.pointRate) > 0 ? String(tx.pointRate) : ''
+      pointRate: Number(tx.pointRate) > 0 ? String(tx.pointRate) : '',
+      pointUnit: Number(tx.pointUnit) || 0
     });
     methodTouched = true;
     show('input');
@@ -778,11 +798,15 @@
     renderPointToggle();
   }
 
-  // 支払方法ごとの還元率の初期値:カードはメニューの値、電子マネーはそれぞれの値(0 なら対象にできない)
+  // 支払方法ごとの還元率の初期値(%)と、何円ごとにポイントが付くか(0 なら 1円単位)。メニューで設定する
   function pointRate(method) {
-    if (findCard(method)) return Number(state.settings.pointRate) || 0;
-    const w = findWallet(method);
-    return (w && Number(w.pointRate)) || 0;
+    const m = findCard(method) || findWallet(method);
+    return (m && Number(m.pointRate)) || 0;
+  }
+
+  function pointUnit(method) {
+    const m = findCard(method) || findWallet(method);
+    return (m && Number(m.pointUnit)) || 0;
   }
 
   function pointEligible(method) {
@@ -798,19 +822,23 @@
     btn.classList.toggle('active', form.point);
     btn.setAttribute('aria-pressed', String(form.point));
     btn.textContent = form.point ? '✓ 還元の対象' : `${pointRate(form.method)}%還元の対象`;
+    $('#point-unit').textContent = form.pointUnit ? `${num(form.pointUnit)}円ごと` : '';
     $('#point-rate-wrap').hidden = !form.point;
     if (form.point && $('#point-rate').value !== form.pointRate) $('#point-rate').value = form.pointRate;
     updatePointPreview();
   }
 
   function updatePointPreview() {
-    const pts = L.txPoints({ type: 'expense', amount: Number(form.amount) || 0, pointRate: Number(form.pointRate) || 0 });
+    const pts = L.txPoints({ type: 'expense', amount: Number(form.amount) || 0, pointRate: Number(form.pointRate) || 0, pointUnit: form.pointUnit });
     $('#point-pts').textContent = pts ? '+' + num(pts) + 'P' : '';
   }
 
   $('#point-toggle').addEventListener('click', () => {
     form.point = !form.point;
-    if (form.point && !(Number(form.pointRate) > 0)) form.pointRate = String(pointRate(form.method) || '');
+    if (form.point && !(Number(form.pointRate) > 0)) {
+      form.pointRate = String(pointRate(form.method) || '');
+      form.pointUnit = pointUnit(form.method);
+    }
     renderPointToggle();
   });
 
@@ -983,7 +1011,10 @@
     const b = e.target.closest('[data-method]');
     if (!b) return;
     // 支払方法を変えたら、還元率はその支払方法の初期値に戻す
-    if (form.method !== b.dataset.method && form.point) form.pointRate = String(pointRate(b.dataset.method) || '');
+    if (form.method !== b.dataset.method && form.point) {
+      form.pointRate = String(pointRate(b.dataset.method) || '');
+      form.pointUnit = pointUnit(b.dataset.method);
+    }
     form.method = b.dataset.method;
     methodTouched = true;
     renderMethods();
@@ -1021,11 +1052,15 @@
       memo: form.memo.trim()
     };
     if (isHourly()) data.hours = hourlyRows();
-    if (data.type === 'expense' && pointEligible(data.method) && form.point && Number(form.pointRate) > 0) data.pointRate = Number(form.pointRate);
+    if (data.type === 'expense' && pointEligible(data.method) && form.point && Number(form.pointRate) > 0) {
+      data.pointRate = Number(form.pointRate);
+      if (form.pointUnit > 0) data.pointUnit = form.pointUnit;
+    }
     if (form.editingId) {
       const tx = state.transactions.find((t) => t.id === form.editingId);
       delete tx.hours;
       delete tx.pointRate;
+      delete tx.pointUnit;
       Object.assign(tx, data);
       save();
       toast('変更しました');
@@ -1044,6 +1079,7 @@
     form.work = {};
     form.point = false;
     form.pointRate = '';
+    form.pointUnit = 0;
     methodTouched = false;
     $('#amount').blur();
     renderInput();
@@ -1351,7 +1387,7 @@
         ${p.byMethod.map((x) => `<div class="sub">${esc(methodName(x.method))}(${x.count}件 ${en(x.amount)})</div><div class="sub">${num(x.points)}P</div>`).join('')}
         <div>これまでの合計</div><div>${num(p.total)}P</div>
       </div>
-      <p class="small muted" style="margin:8px 0 0">入力で「還元の対象」にした支払い(カード・Suica など)の、金額 × 還元率(1ポイント未満切り捨て)の目安です。実際のポイントはカード会社のアプリで確認してください。</p>
+      <p class="small muted" style="margin:8px 0 0">入力で「還元の対象」にした支払い(カード・Suica など)の、金額 × 還元率(1ポイント未満切り捨て。Suica の 50円ごと・JAL の 100円ごとのように単位があるときは、その単位に満たない分は数えない)の目安です。率と単位はメニューのカード・電子マネーで変えられます。実際のポイントはカード会社のアプリで確認してください。</p>
     </div>`;
   }
 
@@ -1436,14 +1472,6 @@
       </div>
 
       <div class="card">
-        <h3>ポイント還元</h3>
-        <div class="stack">
-          <label>還元率の初期値(%)<input type="number" id="set-point-rate" inputmode="decimal" min="0" step="0.1" value="${Number(st.pointRate) || 0}"></label>
-        </div>
-        <p class="small muted">カード払いの入力で「還元の対象」を押すと、この率が入ります。キャンペーンで率が違うときは、入力画面でその記録だけ変えられます。レポートで集計できます。</p>
-      </div>
-
-      <div class="card">
         <h3>交通費の定額</h3>
         ${(st.transportPresets || [])
           .map(
@@ -1471,7 +1499,8 @@
                 <option value="bank" ${w.chargeFrom === 'bank' ? 'selected' : ''}>メイン口座(入れた・引き出した時点で支出)</option>
                 ${activeCards().map((c) => `<option value="${esc(c.id)}" ${w.chargeFrom === c.id ? 'selected' : ''}>${esc(c.name)}(チャージした時点で支出)</option>`).join('')}
               </select></label>
-              ${w.id === 'cash' ? '' : `<label class="full">還元率の初期値(%。0 なら還元の対象にしない)<input type="number" data-wallet-point="${esc(w.id)}" inputmode="decimal" min="0" max="100" step="0.1" value="${Number(w.pointRate) || 0}"></label>`}
+              ${w.id === 'cash' ? '' : `<label>還元率の初期値(%。0=対象外)<input type="number" data-wallet-point="${esc(w.id)}" inputmode="decimal" min="0" max="100" step="0.1" value="${Number(w.pointRate) || 0}"></label>
+              <label>何円ごとに付くか(0=1円単位)<input type="number" data-wallet-unit="${esc(w.id)}" inputmode="numeric" min="0" value="${Number(w.pointUnit) || 0}"></label>`}
             </div>
             ${w.id === 'cash' ? (w.since ? '' : '<p class="small" style="margin:6px 0 0">財布の今の残高を入れると、現金の管理を始めます(ATM で引き出した時点で支出、現金で払ったときは財布の残高が減るだけ)。それまでは、現金で払ったときに支出になります。</p>') : `<div class="row-actions"><button type="button" class="btn small danger" data-del-wallet="${esc(w.id)}">削除</button></div>`}
           </div>`
@@ -1496,6 +1525,8 @@
               <label>支払日<select data-f="paymentDay">${dayOptions(c.paymentDay)}</select></label>
               <label>休日の場合<select data-f="holidayAdjust">${adjustOptions(c.holidayAdjust)}</select></label>
               <label class="full">1回の締めあたりの利用上限(0=なし)<input type="number" data-f="monthlyLimit" inputmode="numeric" min="0" value="${Number(c.monthlyLimit) || 0}"></label>
+              <label>還元率の初期値(%)<input type="number" data-f="pointRate" inputmode="decimal" min="0" max="100" step="0.1" value="${Number(c.pointRate) || 0}"></label>
+              <label>何円ごとに付くか(0=1円単位)<input type="number" data-f="pointUnit" inputmode="numeric" min="0" value="${Number(c.pointUnit) || 0}"></label>
             </div>
             <div class="preview">${cardPreview(c)}</div>
             <div class="row-actions"><button type="button" class="btn small danger" data-del-card="${esc(c.id)}">削除</button></div>
@@ -1597,8 +1628,10 @@
     const cardEl = t.closest('[data-card]');
     const incEl = t.closest('[data-income]');
     const catEl = t.closest('[data-cat-id]');
-    const numeric = ['closingDay', 'paymentMonthOffset', 'paymentDay', 'monthlyLimit', 'amount', 'day'];
-    const val = numeric.includes(f) ? Math.max(0, Number(t.value) || 0) : t.value.trim();
+    const numeric = ['closingDay', 'paymentMonthOffset', 'paymentDay', 'monthlyLimit', 'amount', 'day', 'pointRate', 'pointUnit'];
+    let val = numeric.includes(f) ? Math.max(0, Number(t.value) || 0) : t.value.trim();
+    if (f === 'pointRate') val = Math.min(100, val);
+    if (f === 'pointUnit') val = Math.round(val);
     let rerender = false;
 
     if (cardEl && f) {
@@ -1614,6 +1647,8 @@
       const c = state.categories[catEditType].find((x) => x.id === catEl.dataset.catId);
       c[t.dataset.cf] = t.dataset.cf === 'name' ? t.value.trim() || 'カテゴリー' : t.value;
       rerender = t.dataset.cf !== 'name';
+    } else if (t.dataset.walletUnit) {
+      findWallet(t.dataset.walletUnit).pointUnit = Math.max(0, Math.round(Number(t.value) || 0));
     } else if (t.dataset.walletPoint) {
       findWallet(t.dataset.walletPoint).pointRate = Math.min(100, Math.max(0, Number(t.value) || 0));
     } else if (t.dataset.walletFrom) {
@@ -1637,9 +1672,6 @@
       w.balanceAdjust = (Number(w.balanceAdjust) || 0) + (Math.round(Number(t.value) || 0) - L.walletBalance(state, w));
     } else if (t.dataset.wallet) {
       findWallet(t.dataset.wallet).name = t.value.trim() || 'コード決済';
-    } else if (t.id === 'set-point-rate') {
-      state.settings.pointRate = Math.min(100, Math.max(0, Number(t.value) || 0));
-      rerender = true;
     } else if (t.dataset.presetIdx !== undefined) {
       state.settings.transportPresets[Number(t.dataset.presetIdx)] = Math.min(MAX_AMOUNT, Math.max(0, Math.round(Number(t.value) || 0)));
     } else if (t.dataset.rateIdx !== undefined) {
@@ -1686,7 +1718,9 @@
         paymentMonthOffset: 1,
         paymentDay: 27,
         holidayAdjust: 'next',
-        monthlyLimit: 0
+        monthlyLimit: 0,
+        pointRate: Number(state.settings.pointRate) || 0,
+        pointUnit: 0
       });
     } else if (t.dataset.delCard) {
       const id = t.dataset.delCard;
