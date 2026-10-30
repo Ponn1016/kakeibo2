@@ -26,6 +26,9 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; }
+/* ピンチでの拡大・ダブルタップでの拡大をさせない(アプリとして使うので画面を固定する) */
+html { touch-action: pan-x pan-y; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+button, a, input, select, label { touch-action: manipulation; }
 
 body {
   background: var(--bg);
@@ -285,7 +288,7 @@ main { max-width: 600px; margin: 0 auto; padding: 0 16px 16px; }
 .point-rate .point-unit { font-size: 12px; color: var(--muted); }
 .nl-row { flex-wrap: wrap; }
 .nl-row .point-toggle:disabled { opacity: .6; }
-.coupon-select { border: 1px solid var(--line); padding: 6px 8px; font-size: 13px; max-width: 100%; }
+.coupon-select { border: 1px solid var(--line); padding: 6px 8px; font-size: 16px; max-width: 100%; }
 .coupon-select[hidden] { display: none; }
 .nl-row #nl-pts { font-size: 13px; color: var(--mint-strong); font-variant-numeric: tabular-nums; }
 .nl-note { flex-basis: 100%; margin: 0; font-size: 11px; color: var(--muted); }

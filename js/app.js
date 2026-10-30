@@ -476,6 +476,16 @@
     if (go) show(go.dataset.go);
   });
 
+  // iOS はビューポートの指定だけではピンチでの拡大を止められないので、ジェスチャーを止める
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach((type) => document.addEventListener(type, (e) => e.preventDefault(), { passive: false }));
+  document.addEventListener(
+    'touchmove',
+    (e) => {
+      if (e.touches.length > 1) e.preventDefault();
+    },
+    { passive: false }
+  );
+
   // ---------- ホーム ----------
   // 「今月あといくら使えるか」だけを大きく見せる
 

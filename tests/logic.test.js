@@ -440,4 +440,9 @@ test('お店ごとの還元ランキング', () => {
   assert.deepEqual(rank('mcd', '2026-11-01'), ['smbc:mcd-mo 12', 'smbc:mcd-delivery 10.5', 'smbc 7', 'jal 1', 'icoca 0']);
   assert.deepEqual(rank('mcd', '2026-12-01'), ['smbc 7', 'jal 1', 'icoca 0']);
   assert.deepEqual(L.storeRanking(s, 'unknown', '2026-11-01'), []);
+  // Wesmo! を電子マネーとして登録していれば、その支払方法として選べる
+  s.wallets = [{ id: 'w1', name: 'Wesmo!' }];
+  const kfc = L.storeRanking(s, 'kfc', '2026-11-01');
+  assert.deepEqual([kfc[1].pay, kfc[1].method], ['wesmo', 'w1']);
+  assert.equal(kfc[3].method, null); // ICOCA は未登録
 });

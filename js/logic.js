@@ -542,9 +542,13 @@
       const r = storeRule(store, 'jal', date);
       list.push({ pay: 'jal', method: jal.id, name: jal.name, rate: r ? r.rate : Number(jal.pointRate) || 1, note: r ? r.note : '' });
     }
+    // Wesmo!・ICOCA は、同じ名前の電子マネーを登録していればそれを選べるようにする
+    const wallet = (re) => (state.wallets || []).find((x) => !x.archived && re.test(x.name || ''));
+    const wesmo = wallet(/wesmo/i);
+    const icoca = wallet(/icoca/i);
     const w = storeRule(store, 'wesmo', date);
-    if (w) list.push({ pay: 'wesmo', method: null, name: 'Wesmo!', rate: w.rate, note: w.note });
-    list.push({ pay: 'icoca', method: null, name: 'ICOCA', rate: 0, note: '関東では買い物も乗車も0%(WESTERポイントは Wesmo! で)' });
+    if (w) list.push({ pay: 'wesmo', method: wesmo ? wesmo.id : null, name: wesmo ? wesmo.name : 'Wesmo!', rate: w.rate, note: w.note });
+    list.push({ pay: 'icoca', method: icoca ? icoca.id : null, name: icoca ? icoca.name : 'ICOCA', rate: 0, note: '関東では買い物も乗車も0%(WESTERポイントは Wesmo! で)' });
     return list.sort((a, b) => b.rate - a.rate);
   }
 
