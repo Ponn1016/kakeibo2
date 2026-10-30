@@ -495,63 +495,6 @@
     };
   }
 
-  // ---------- お店ごとの還元ランキング ----------
-  /*
-   * pay:'smbc'(三井住友NL)/'jal'(JALカード)/'wesmo'(Wesmo!)/'icoca'(ICOCA)
-   * smbc7:NL の 7%対象店か。rules:その支払方法の率(期間・月の指定があれば、その間だけ)
-   */
-  const WESMO_OSHITOKU = { pay: 'wesmo', rate: 4, to: '2026-12-29', note: '推しトク(〜2026/12/29)' };
-  const JAL_TOKUYAKU_REAL = { pay: 'jal', rate: 2, note: '特約店。実カード(Apple Pay不可)' };
-  const STORES = [
-    { id: 'seven', name: 'セブン-イレブン', smbc7: true },
-    { id: 'lawson', name: 'ローソン', smbc7: true },
-    { id: 'famima', name: 'ファミリーマート', smbc7: true, rules: [{ pay: 'jal', rate: 2, to: '2025-10-31', note: '特約店(2025/10/31で終了)' }] },
-    { id: 'mcd', name: 'マクドナルド', smbc7: true, campaigns: ['mcd-mo', 'mcd-delivery'] },
-    { id: 'kfc', name: 'ケンタッキー', smbc7: true, rules: [WESMO_OSHITOKU] },
-    { id: 'matsuya', name: '松屋', rules: [WESMO_OSHITOKU] },
-    { id: 'yamada', name: 'ヤマダデンキ', rules: [WESMO_OSHITOKU] },
-    { id: 'joshin', name: 'Joshin', rules: [{ pay: 'wesmo', rate: 4, from: '2026-11-01', to: '2026-11-30', note: '推しトク(11月のみ)' }] },
-    { id: 'matsukiyo', name: 'マツモトキヨシ', rules: [JAL_TOKUYAKU_REAL] },
-    { id: 'cocokara', name: 'ココカラファイン', rules: [JAL_TOKUYAKU_REAL] }
-  ];
-
-  function storeRule(store, pay, date) {
-    return (store.rules || []).find((r) => r.pay === pay && (!r.from || date >= r.from) && (!r.to || date <= r.to)) || null;
-  }
-
-  // お店(storeId)で日付 date に払うときの、支払方法ごとの還元率(%)を高い順に
-  function storeRanking(state, storeId, date) {
-    const store = STORES.find((x) => x.id === storeId);
-    if (!store) return [];
-    const smbc = (state.cards || []).find((c) => c.pointScheme === 'smbc' && !c.archived);
-    const jal = (state.cards || []).find((c) => c.brand === 'jal' && !c.archived);
-    const list = [];
-    if (smbc) {
-      const base = (SMBC_BASE / SMBC_UNIT) * 100;
-      const with7 = base + (store.smbc7 ? (SMBC_BONUS7 / SMBC_UNIT) * 100 : 0);
-      list.push({ pay: 'smbc', method: smbc.id, name: smbc.name, rate: with7, nl7: !!store.smbc7, note: store.smbc7 ? '7%対象(スマホのタッチ決済・モバイルオーダー)' : '' });
-      activeCampaigns(state, date)
-        .filter((c) => (store.campaigns || []).includes(c.id))
-        .forEach((c) => {
-          const tagged = !!store.smbc7 && c.with7;
-          const rate = base + (tagged ? (SMBC_BONUS7 / SMBC_UNIT) * 100 : 0) + (couponPerUnit(c, tagged) / SMBC_UNIT) * 100;
-          list.push({ pay: 'smbc', method: smbc.id, name: smbc.name, rate, nl7: tagged, coupon: c.id, note: c.name + ' Vクーポン +' + c.rate + '%' + (c.with7 ? '' : '(7%対象外)') });
-        });
-    }
-    if (jal) {
-      const r = storeRule(store, 'jal', date);
-      list.push({ pay: 'jal', method: jal.id, name: jal.name, rate: r ? r.rate : Number(jal.pointRate) || 1, note: r ? r.note : '' });
-    }
-    // Wesmo!・ICOCA は、同じ名前の電子マネーを登録していればそれを選べるようにする
-    const wallet = (re) => (state.wallets || []).find((x) => !x.archived && re.test(x.name || ''));
-    const wesmo = wallet(/wesmo/i);
-    const icoca = wallet(/icoca/i);
-    const w = storeRule(store, 'wesmo', date);
-    if (w) list.push({ pay: 'wesmo', method: wesmo ? wesmo.id : null, name: wesmo ? wesmo.name : 'Wesmo!', rate: w.rate, note: w.note });
-    list.push({ pay: 'icoca', method: icoca ? icoca.id : null, name: icoca ? icoca.name : 'ICOCA', rate: 0, note: '関東では買い物も乗車も0%(WESTERポイントは Wesmo! で)' });
-    return list.sort((a, b) => b.rate - a.rate);
-  }
-
   /*
    * メイン口座の見通し。settings.bank = { balance, asOf(残高を入れた日), updatedAt(入れた時刻) }
    * 出せるお金 = 残高 − 残高を入れた日以降のカード引落 − 残高を入れた後に記録したチャージ − 最低限残しておく額
@@ -883,7 +826,6 @@
     txPoints,
     pointsSummary,
     CAMPAIGNS,
-    STORES,
     activeCampaigns,
     isSmbcCard,
     smbcTxInfo,
@@ -891,7 +833,6 @@
     smbcTxPoints,
     smbcBonusByMonth,
     couponReminders,
-    storeRanking,
     isSavings,
     dailyTotals,
     suggestPayment,
