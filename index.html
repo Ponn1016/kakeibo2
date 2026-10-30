@@ -54,6 +54,11 @@
         <span class="unit">円</span>
       </div>
       <div class="presets" id="preset-row" hidden></div>
+      <div class="form-row" id="store-row">
+        <label class="row-label" for="store-select">お店</label>
+        <select id="store-select" class="pill store-select"></select>
+      </div>
+      <div class="store-rank" id="store-rank" hidden></div>
       <div class="form-row method-row" id="method-row">
         <div class="row-label">支払</div>
         <div class="methods" id="methods"></div>
@@ -67,6 +72,12 @@
           <span class="point-unit" id="point-unit"></span>
           <b id="point-pts"></b>
         </span>
+      </div>
+      <div class="point-row nl-row" id="nl-row" hidden>
+        <button type="button" class="point-toggle" id="nl7-toggle" aria-pressed="false">7%対象店</button>
+        <select id="coupon-select" class="pill coupon-select" aria-label="Vクーポン"></select>
+        <b id="nl-pts"></b>
+        <p class="nl-note">基本 0.5% は自動。7%はスマホのタッチ決済・モバイルオーダーだけ(実カードのタッチ・iD・差し込みは対象外、商業施設内の店舗は対象外のことあり)</p>
       </div>
       <p class="hint" id="suggest-hint"></p>
       <div class="section-label">カテゴリー</div>

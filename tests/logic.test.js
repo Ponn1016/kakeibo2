@@ -321,3 +321,123 @@ test('現金(ATM で引き出した時点で支出、財布の残高を管理)',
   assert.equal(sum.spent, 700 + 10000);
   assert.equal(L.bankOutlook(s, '2026-10-05').chargesSince, 10000);
 });
+
+// 三井住友NL(Vポイント):基本 0.5% は全利用、7%対象店だけ 6.5% 加算、200円単位
+const nlState = (transactions, extra) => ({
+  settings: {},
+  cards: [
+    { ...cardA, name: 'JAL', brand: 'jal', pointRate: 1, pointUnit: 100 },
+    { ...cardB, name: 'NL', pointScheme: 'smbc' }
+  ],
+  transactions,
+  ...extra
+});
+const nl = (date, amount, opts) => ({ type: 'expense', date, amount, method: 'b', ...opts });
+
+test('NL のポイント:月合計(基本 0.5% は全利用、6.5% は7%対象店の合計)', () => {
+  const s = nlState([
+    nl('2026-10-01', 150, { nl7: true }),
+    nl('2026-10-02', 150, { nl7: true }),
+    nl('2026-10-03', 1000),
+    nl('2026-11-01', 999) // 別の月
+  ]);
+  const r = L.smbcMonthPoints(s, '2026-10');
+  assert.equal(r.base, 6); // floor(1300 / 200) × 1
+  assert.equal(r.bonus7, 13); // floor(300 / 200) × 13
+  assert.equal(r.points, 19);
+  assert.equal(r.taggedAmount, 300);
+  // 7%対象店だけなら floor(合計 / 200) × 14
+  assert.equal(L.smbcMonthPoints(nlState([nl('2026-10-01', 1000, { nl7: true })]), '2026-10').points, 70);
+  assert.equal(L.smbcMonthPoints(nlState([nl('2026-10-01', 399, { nl7: true })]), '2026-10').points, 14);
+});
+
+test('NL のポイント:1回ごとに切り替えると、200円未満の端数は記録ごとに切り捨て', () => {
+  const s = nlState([nl('2026-10-01', 150, { nl7: true }), nl('2026-10-02', 150, { nl7: true }), nl('2026-10-03', 1000)], { settings: { nlPointMode: 'perTx' } });
+  const r = L.smbcMonthPoints(s, '2026-10');
+  assert.equal(r.base, 5);
+  assert.equal(r.bonus7, 0);
+  assert.equal(L.smbcMonthPoints(s, '2026-10', 'monthly').points, 19);
+  assert.equal(L.smbcTxPoints(s, nl('2026-10-01', 699, { nl7: true })), 42); // 200円 × 3 × 14
+});
+
+test('Vクーポン:マック モバイルオーダー +5%(7%と併用で12%)、デリバリー +10%(7%対象外)、期間外は無し', () => {
+  const s = nlState([
+    nl('2026-11-05', 1000, { nl7: true, coupon: 'mcd-mo' }),
+    nl('2026-11-06', 1000, { nl7: true, coupon: 'mcd-delivery' }), // 7%対象にしていても対象外
+    nl('2026-12-01', 1000, { nl7: true, coupon: 'mcd-mo' }) // 11/30 で終了
+  ]);
+  assert.equal(L.smbcTxPoints(s, s.transactions[0]), 120); // 5 + 65 + 50 = 12%
+  assert.equal(L.smbcTxPoints(s, s.transactions[1]), 105); // 5 + 100 = 10.5%
+  assert.equal(L.smbcTxInfo(s, s.transactions[1]).tagged, false);
+  const nov = L.smbcMonthPoints(s, '2026-11');
+  assert.deepEqual([nov.base, nov.bonus7, nov.coupon], [10, 65, 150]);
+  assert.equal(L.smbcMonthPoints(s, '2026-12').points, 70);
+  assert.deepEqual(L.activeCampaigns(s, '2026-10-01').map((c) => c.id), ['mcd-mo', 'mcd-delivery']);
+  assert.deepEqual(L.activeCampaigns(s, '2026-12-01'), []);
+});
+
+test('Vクーポン:合計 20% を超える分は付かない', () => {
+  const campaigns = [{ id: 'big', name: '大きいクーポン', rate: 25, with7: true, from: '2026-10-01', to: '2026-10-31', monthly: true }];
+  const s = nlState([nl('2026-10-10', 1000, { nl7: true, coupon: 'big' })], { campaigns });
+  assert.equal(L.smbcTxPoints(s, s.transactions[0]), 200); // 20%(200円で 40P)まで
+  const plain = nlState([nl('2026-10-10', 1000, { coupon: 'big' })], { campaigns });
+  assert.equal(L.smbcTxPoints(plain, plain.transactions[0]), 200);
+});
+
+test('Vクーポン:月ごとの再獲得の案内は、「獲得した」にするまで出す', () => {
+  const s = nlState([]);
+  assert.deepEqual(L.couponReminders(s, '2026-11-01').map((c) => c.id), ['mcd-mo', 'mcd-delivery']);
+  s.settings.couponAck = { '2026-10': ['mcd-mo', 'mcd-delivery'] };
+  assert.equal(L.couponReminders(s, '2026-10-15').length, 0);
+  assert.equal(L.couponReminders(s, '2026-11-01').length, 2); // 次の月はまた出す
+  assert.equal(L.couponReminders(s, '2026-12-01').length, 0); // 期間が終われば出さない
+});
+
+test('照合:NL の 7%加算分を月ごとに、3ヵ月後の月末までは付与待ち', () => {
+  const s = nlState([nl('2026-08-20', 2000, { nl7: true }), nl('2026-10-03', 1000, { nl7: true }), nl('2026-10-04', 5000), nl('2026-09-01', 3000)]);
+  const list = L.smbcBonusByMonth(s, '2026-11-30');
+  assert.deepEqual(
+    list.map((r) => [r.month, r.taggedAmount, r.bonus7, r.due, r.pending]),
+    [
+      ['2026-10', 1000, 65, '2027-01-31', true],
+      ['2026-08', 2000, 130, '2026-11-30', true]
+    ]
+  );
+  assert.equal(L.smbcBonusByMonth(s, '2026-12-01')[1].pending, false);
+});
+
+test('ポイントの集計:NL は月ごとの計算、ほかは記録ごと', () => {
+  const s = nlState([
+    nl('2026-10-01', 1000, { nl7: true }),
+    nl('2026-10-02', 1000),
+    { type: 'expense', date: '2026-10-03', amount: 1099, method: 'a', pointRate: 1, pointUnit: 100 },
+    nl('2026-09-01', 400, { nl7: true })
+  ]);
+  const p = L.pointsSummary(s, '2026-10');
+  assert.equal(p.month, 10 + 65 + 10); // NL 基本 10 + 加算 65、JAL 10マイル
+  assert.deepEqual(p.byMethod.map((x) => [x.method, x.points]), [['a', 10], ['b', 75]]);
+  assert.equal(p.total, 85 + 28);
+});
+
+test('お店ごとの還元ランキング', () => {
+  const s = nlState([]);
+  const rank = (id, date) => L.storeRanking(s, id, date).map((r) => r.pay + (r.coupon ? ':' + r.coupon : '') + ' ' + r.rate);
+  // ケンタッキーは NL の 7% が Wesmo! 推しトク 4% より上
+  assert.deepEqual(rank('kfc', '2026-11-01'), ['smbc 7', 'wesmo 4', 'jal 1', 'icoca 0']);
+  // 推しトクは 2026/12/29 まで
+  assert.deepEqual(rank('kfc', '2026-12-30'), ['smbc 7', 'jal 1', 'icoca 0']);
+  assert.deepEqual(rank('matsuya', '2026-11-01'), ['wesmo 4', 'jal 1', 'smbc 0.5', 'icoca 0']);
+  // Joshin の推しトクは 11月だけ
+  assert.deepEqual(rank('joshin', '2026-10-30'), ['jal 1', 'smbc 0.5', 'icoca 0']);
+  assert.equal(rank('joshin', '2026-11-15')[0], 'wesmo 4');
+  // ファミマの JAL 特約店は 2025/10/31 で終了
+  assert.deepEqual(rank('famima', '2025-10-31'), ['smbc 7', 'jal 2', 'icoca 0']);
+  assert.deepEqual(rank('famima', '2026-10-30'), ['smbc 7', 'jal 1', 'icoca 0']);
+  // マツキヨ・ココカラは JAL 特約店 2%(実カード)
+  assert.equal(rank('matsukiyo', '2026-11-01')[0], 'jal 2');
+  assert.match(L.storeRanking(s, 'cocokara', '2026-11-01')[0].note, /実カード/);
+  // マクドナルド:モバイルオーダー + Vクーポンで 12%、デリバリーは 10.5%(7%対象外)
+  assert.deepEqual(rank('mcd', '2026-11-01'), ['smbc:mcd-mo 12', 'smbc:mcd-delivery 10.5', 'smbc 7', 'jal 1', 'icoca 0']);
+  assert.deepEqual(rank('mcd', '2026-12-01'), ['smbc 7', 'jal 1', 'icoca 0']);
+  assert.deepEqual(L.storeRanking(s, 'unknown', '2026-11-01'), []);
+});
