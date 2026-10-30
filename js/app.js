@@ -45,13 +45,16 @@
         hourlyRates: [1830, 1530, 1380, 1280],
         transportPresets: [1372, 1116], // 収入「交通費」でボタンから選べる金額
         pointRate: 7, // 還元率を設定していないカードの初期値(%)
+        nlPointMode: 'monthly', // 三井住友NL のポイント:'monthly'(月合計で 200円単位)/ 'perTx'(1回ごと)
         payday: { day: 25, holidayAdjust: 'prev' }, // 給料がメイン口座に振り込まれる日(口座から出せるお金の区切り)
         incomeMode: 'hourly' // 収入の入力方法:'hourly'(時給×時間)/ 'amount'(金額)
       },
       cards: [
         // pointRate:還元率の初期値(%)、pointUnit:何円ごとにポイントが付くか(0 なら 1円単位で計算)
-        { id: 'cardA', name: 'JALカード', closingDay: 15, paymentMonthOffset: 1, paymentDay: 10, holidayAdjust: 'next', monthlyLimit: 0, pointRate: 1, pointUnit: 100 },
-        { id: 'cardB', name: '三井住友NL', closingDay: 31, paymentMonthOffset: 1, paymentDay: 26, holidayAdjust: 'next', monthlyLimit: 0, pointRate: 7, pointUnit: 0 }
+        // pointScheme 'smbc' のカード(三井住友NL)は、基本 0.5% を自動で数え、7%対象店と Vクーポンを入力で選ぶ
+        // brand 'jal' はお店ごとの還元ランキングで JAL カードとして扱う
+        { id: 'cardA', name: 'JALカード', closingDay: 15, paymentMonthOffset: 1, paymentDay: 10, holidayAdjust: 'next', monthlyLimit: 0, pointRate: 1, pointUnit: 100, brand: 'jal' },
+        { id: 'cardB', name: '三井住友NL', closingDay: 31, paymentMonthOffset: 1, paymentDay: 26, holidayAdjust: 'next', monthlyLimit: 0, pointRate: 0, pointUnit: 0, pointScheme: 'smbc' }
       ],
       // コード決済・電子マネー。口座からチャージして使うので、使った日に支払ったものとして扱う
       // chargeFrom にカードの id があると、そのカードからチャージする(チャージした時点で支出)。なければメイン口座から
@@ -93,16 +96,17 @@
       [-19, 'expense', 3200, 'fixed', 'cardB', 'スマホ'],
       [-16, 'expense', 10000, 'other', 'bank', 'ATM引き出し', null, { chargeTo: 'cash' }],
       [-14, 'expense', 1065, 'food', 'cash', ''],
-      [-12, 'expense', 1140, 'daily', 'cardB', '洗剤', null, { pointRate: 7 }],
+      [-12, 'expense', 1140, 'daily', 'cardB', '洗剤'],
       [-10, 'expense', 3000, 'other', 'cardB', 'Suicaチャージ', null, { chargeTo: 'suica' }],
-      [-9, 'expense', 6300, 'social', 'cardB', '飲み会', null, { pointRate: 10 }],
+      [-9, 'expense', 6300, 'social', 'cardB', '飲み会'],
+      [-7, 'expense', 690, 'food', 'cardB', 'マクドナルド', null, { nl7: true, coupon: 'mcd-mo', store: 'mcd' }],
       [-8, 'expense', 178, 'other', 'suica', '電車', null, { pointRate: 2, pointUnit: 50 }],
       [-8, 'expense', 178, 'other', 'suica', '電車', null, { pointRate: 2, pointUnit: 50 }],
       [-6, 'expense', 2400, 'beauty', 'cardA', ''],
       [-4, 'expense', 740, 'food', 'cash', ''],
       [-2, 'expense', 1000, 'social', 'cash', ''],
       [-1, 'expense', 750, 'food', 'cash', 'ランチ'],
-      [-1, 'expense', 780, 'food', 'cardB', 'コンビニ', null, { pointRate: 7 }],
+      [-1, 'expense', 780, 'food', 'cardB', 'コンビニ', null, { nl7: true, store: 'seven' }],
       [-3, 'expense', 1480, 'daily', 'paypay', 'ドラッグストア'],
       [-5, 'expense', 650, 'food', 'paypay', 'カフェ'],
       [-5, 'charge', 1000, null, 'paypay', ''],
@@ -167,6 +171,24 @@
           transactions = transactions.map((t) => (Number(t.pointRate) > 0 && t.pointUnit === undefined && units[t.method] ? { ...t, pointUnit: units[t.method] } : t));
         }
         settings.pointsPerMethod = true;
+      }
+      // 三井住友NL を「基本 0.5% は自動 + 7%対象店を選ぶ」計算にする(1回だけ)。
+      // それまで手で率を付けていた NL の記録は 7%対象店として残し、率は消す
+      if (!settings.smbcScheme) {
+        cards = cards.map((c) => {
+          if (c.id === 'cardA' && !c.brand) return { ...c, brand: 'jal' };
+          if (c.id === 'cardB' && !c.pointScheme) return { ...c, pointScheme: 'smbc' };
+          return c;
+        });
+        const smbcIds = cards.filter((c) => c.pointScheme === 'smbc').map((c) => c.id);
+        if (Array.isArray(transactions)) {
+          transactions = transactions.map((t) => {
+            if (!smbcIds.includes(t.method) || t.pointRate === undefined) return t;
+            const { pointRate, pointUnit, ...rest } = t;
+            return Number(pointRate) >= 7 ? { ...rest, nl7: true } : rest;
+          });
+        }
+        settings.smbcScheme = true;
       }
       return {
         ...base,
@@ -475,7 +497,7 @@
           <button type="button" class="btn primary" data-add-income>収入を記録する</button>
           <p class="small muted">使い始めは、今の手元のお金(メイン口座 + PayPay + 財布の現金)を収入の「その他」で記録してください。</p>
           ${s.spent ? `<p class="small muted">今月使ったお金:${en(s.spent)}</p>` : ''}
-        </section>${bankCard()}${demo}`;
+        </section>${couponBanner()}${bankCard()}${demo}`;
       return;
     }
 
@@ -511,9 +533,19 @@
         <div class="meter-labels"><span>使った ${en(s.spent)}</span><span>予算 ${en(budget)}</span></div>
         <p class="budget-line">予算 = ${s.carry ? '先月からの繰越 ' + en(s.carry) + ' + ' : ''}今月の収入 ${en(s.income)}${s.savings ? ' − 残しておく ' + en(s.savings) : ''}</p>
       </section>
+      ${couponBanner()}
       ${bankCard()}
       <button type="button" class="link-row" data-go="report">内訳・引落予定を見る${I.ui('chevR', 18, 1.8)}</button>
       ${demo}`;
+  }
+
+  // 月初の「Vクーポン再獲得」(月ごとに獲得し直すクーポンが今月有効なあいだ、「獲得した」を押すまで出す)
+  function couponBanner() {
+    const list = L.couponReminders(state);
+    if (!list.length) return '';
+    return `<section class="coupon-banner"><div class="grow"><b>Vクーポンを今月も獲得しましたか？</b><div class="small">${list
+      .map((c) => esc(c.name) + ' +' + c.rate + '%(〜' + mdw(c.to) + ')')
+      .join('<br>')}<br>月ごとに獲得し直す必要があります。</div></div><button type="button" class="btn small primary" data-coupon-ack>獲得した</button></section>`;
   }
 
   // メイン口座から出せるお金(残高 − 次の給料日までの引落 − チャージ − 残しておく額)
@@ -546,6 +578,13 @@
 
   $('#view-home').addEventListener('click', (e) => {
     if (e.target.closest('[data-bank-update]')) return updateBankBalance();
+    if (e.target.closest('[data-coupon-ack]')) {
+      const mk = L.monthKey(L.today());
+      const ack = (state.settings.couponAck = state.settings.couponAck || {});
+      ack[mk] = [...new Set((ack[mk] || []).concat(L.couponReminders(state).map((c) => c.id)))];
+      save();
+      return render();
+    }
     if (!e.target.closest('[data-add-income]')) return;
     resetForm();
     form.type = 'income';
@@ -581,7 +620,7 @@
   // work: 時給ごとの入力中の時間と分 { "1830": { h: "7", m: "30" }, ... }
   // point: この支出をポイント還元(7%還元など)の対象にするか
   // pointRate: この支出の還元率(%)。オンにしたときはメニューの初期値が入る
-  const form = { editingId: null, type: 'expense', date: L.today(), amount: '', category: null, method: 'cash', memo: '', work: {}, incomeMode: 'hourly', point: false, pointRate: '', pointUnit: 0 };
+  const form = { editingId: null, type: 'expense', date: L.today(), amount: '', category: null, method: 'cash', memo: '', work: {}, incomeMode: 'hourly', point: false, pointRate: '', pointUnit: 0, nl7: false, coupon: '', store: '' };
   let methodTouched = false;
   let returnView = 'home'; // 編集を終えたときに戻る画面
 
@@ -597,6 +636,9 @@
     form.point = false;
     form.pointRate = '';
     form.pointUnit = 0;
+    form.nl7 = false;
+    form.coupon = '';
+    form.store = '';
     methodTouched = false;
   }
 
@@ -621,7 +663,10 @@
       incomeMode: tx.hours && tx.hours.length ? 'hourly' : 'amount',
       point: Number(tx.pointRate) > 0,
       pointRate: Number(tx.pointRate) > 0 ? String(tx.pointRate) : '',
-      pointUnit: Number(tx.pointUnit) || 0
+      pointUnit: Number(tx.pointUnit) || 0,
+      nl7: !!tx.nl7,
+      coupon: tx.coupon || '',
+      store: tx.store || ''
     });
     methodTouched = true;
     show('input');
@@ -796,6 +841,8 @@
     $('#suggest-hint').textContent = sug.reason;
     renderWalletInfo();
     renderPointToggle();
+    renderSmbcRow();
+    renderStore();
   }
 
   // 支払方法ごとの還元率の初期値(%)と、何円ごとにポイントが付くか(0 なら 1円単位)。メニューで設定する
@@ -810,8 +857,108 @@
   }
 
   function pointEligible(method) {
+    if (L.isSmbcCard(state, method)) return false; // 三井住友NL は下の「7%対象店」で
     return !!findCard(method) || pointRate(method) > 0;
   }
+
+  // ---------- 三井住友NL:7%対象店と Vクーポン ----------
+  function renderSmbcRow() {
+    const row = $('#nl-row');
+    row.hidden = !(form.type === 'expense' && L.isSmbcCard(state, form.method));
+    if (row.hidden) return;
+    const coupons = L.activeCampaigns(state, form.date);
+    if (form.coupon && !coupons.some((c) => c.id === form.coupon)) form.coupon = '';
+    const coupon = coupons.find((c) => c.id === form.coupon);
+    const blocked = coupon && !coupon.with7; // 7% と併用できないクーポン
+    const btn = $('#nl7-toggle');
+    btn.classList.toggle('active', form.nl7 && !blocked);
+    btn.disabled = !!blocked;
+    btn.setAttribute('aria-pressed', String(form.nl7 && !blocked));
+    btn.textContent = blocked ? '7%対象外(このクーポン)' : form.nl7 ? '✓ 7%対象店' : '7%対象店';
+    const sel = $('#coupon-select');
+    sel.hidden = !coupons.length;
+    sel.innerHTML = '<option value="">Vクーポンなし</option>' + coupons.map((c) => `<option value="${esc(c.id)}" ${c.id === form.coupon ? 'selected' : ''}>${esc(c.short)} +${c.rate}%${c.with7 ? '' : '(7%対象外)'}</option>`).join('');
+    updateSmbcPreview();
+  }
+
+  function updateSmbcPreview() {
+    const pts = L.smbcTxPoints(state, { type: 'expense', date: form.date, amount: Number(form.amount) || 0, method: form.method, nl7: form.nl7, coupon: form.coupon });
+    $('#nl-pts').textContent = pts ? '目安 +' + num(pts) + 'P' : '';
+  }
+
+  $('#nl7-toggle').addEventListener('click', () => {
+    form.nl7 = !form.nl7;
+    renderSmbcRow();
+  });
+
+  $('#coupon-select').addEventListener('change', (e) => {
+    form.coupon = e.target.value;
+    renderSmbcRow();
+  });
+
+  // ---------- お店:選ぶと支払方法ごとの還元率を高い順に出し、NL の 7%対象・JAL の特約店の率を入れる ----------
+  function renderStore() {
+    const row = $('#store-row');
+    row.hidden = form.type !== 'expense';
+    const rank = $('#store-rank');
+    if (row.hidden) return (rank.hidden = true);
+    const sel = $('#store-select');
+    sel.innerHTML = '<option value="">指定なし</option>' + L.STORES.map((x) => `<option value="${esc(x.id)}" ${x.id === form.store ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
+    const list = form.store ? L.storeRanking(state, form.store, form.date) : [];
+    rank.hidden = !list.length;
+    rank.innerHTML = list
+      .map(
+        (r, i) => `<button type="button" class="rank-item ${r.method === form.method && (r.coupon || '') === form.coupon ? 'active' : ''}" ${r.method ? `data-rank="${i}"` : 'disabled'}>
+          <b>${i + 1}</b><span class="grow">${esc(r.name)}${r.note ? `<small>${esc(r.note)}</small>` : ''}${r.method ? '' : '<small>アプリに未登録</small>'}</span><span class="rate">${fmtRate(r.rate)}%</span></button>`
+      )
+      .join('');
+  }
+
+  function fmtRate(n) {
+    return String(Math.round(n * 10) / 10);
+  }
+
+  // お店と支払方法に合わせて、7%対象・クーポン・特約店の率を入れる
+  function applyStoreDefaults() {
+    if (!form.store) return;
+    const list = L.storeRanking(state, form.store, form.date).filter((r) => r.method === form.method);
+    const smbc = list.find((r) => r.pay === 'smbc' && (r.coupon || '') === form.coupon) || list.find((r) => r.pay === 'smbc' && !r.coupon);
+    if (smbc) {
+      form.nl7 = smbc.nl7;
+      return;
+    }
+    const jal = list.find((r) => r.pay === 'jal');
+    if (jal && jal.rate !== pointRate(form.method)) {
+      form.point = true;
+      form.pointRate = String(jal.rate);
+      form.pointUnit = pointUnit(form.method);
+    }
+  }
+
+  $('#store-select').addEventListener('change', (e) => {
+    form.store = e.target.value;
+    form.coupon = '';
+    // 支払方法をまだ自分で選んでいなければ、そのお店でいちばん還元の多い支払方法にする
+    const top = form.store && !methodTouched ? L.storeRanking(state, form.store, form.date).find((r) => r.method) : null;
+    if (top) {
+      form.method = top.method;
+      form.coupon = top.coupon || '';
+      methodTouched = true;
+    }
+    applyStoreDefaults();
+    renderMethods();
+  });
+
+  $('#store-rank').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-rank]');
+    if (!b) return;
+    const r = L.storeRanking(state, form.store, form.date)[Number(b.dataset.rank)];
+    form.method = r.method;
+    form.coupon = r.coupon || '';
+    methodTouched = true;
+    applyStoreDefaults();
+    renderMethods();
+  });
 
   // カード払い・還元率のある電子マネーのときに出す「還元の対象」ボタン。オンにすると還元率(初期値はメニューの値)を入れられる
   function renderPointToggle() {
@@ -1016,6 +1163,8 @@
       form.pointUnit = pointUnit(b.dataset.method);
     }
     form.method = b.dataset.method;
+    if (form.coupon && !L.isSmbcCard(state, form.method)) form.coupon = '';
+    applyStoreDefaults();
     methodTouched = true;
     renderMethods();
   });
@@ -1056,11 +1205,19 @@
       data.pointRate = Number(form.pointRate);
       if (form.pointUnit > 0) data.pointUnit = form.pointUnit;
     }
+    if (data.type === 'expense' && L.isSmbcCard(state, data.method)) {
+      if (form.coupon) data.coupon = form.coupon;
+      if (form.nl7 && L.smbcTxInfo(state, { ...data, nl7: true }).tagged) data.nl7 = true;
+    }
+    if (data.type === 'expense' && form.store) data.store = form.store;
     if (form.editingId) {
       const tx = state.transactions.find((t) => t.id === form.editingId);
       delete tx.hours;
       delete tx.pointRate;
       delete tx.pointUnit;
+      delete tx.nl7;
+      delete tx.coupon;
+      delete tx.store;
       Object.assign(tx, data);
       save();
       toast('変更しました');
@@ -1071,7 +1228,7 @@
     state.transactions.push({ id: uid(), createdAt: new Date().toISOString(), ...data });
     save();
     const card = data.type === 'expense' ? findCard(data.method) : null;
-    const pts = L.txPoints(data);
+    const pts = L.isSmbcCard(state, data.method) ? L.smbcTxPoints(state, data) : L.txPoints(data);
     toast(card ? `記録しました(${mdw(L.withdrawalDateFor(card, data.date))} 引落${pts ? ' / +' + num(pts) + 'P' : ''})` : '記録しました');
     // 日付とカテゴリーはそのまま、続けて入力できるようにする
     form.amount = '';
@@ -1080,6 +1237,8 @@
     form.point = false;
     form.pointRate = '';
     form.pointUnit = 0;
+    form.nl7 = false;
+    form.coupon = '';
     methodTouched = false;
     $('#amount').blur();
     renderInput();
@@ -1215,7 +1374,18 @@
     if (tx.hours && tx.hours.length) sub.push(hoursText(tx.hours));
     if (L.isSavings(tx)) sub.push('使えるお金には含めません');
     if (L.isPrepaidUse(state, tx)) sub.push(tx.method === 'cash' ? '引き出し時に支出済み' : 'チャージ時に支出済み');
-    if (L.txPoints(tx)) sub.push(`${tx.pointRate}%還元 +${num(L.txPoints(tx))}P`);
+    if (L.txPoints(tx) && !L.isSmbcCard(state, tx.method)) sub.push(`${tx.pointRate}%還元 +${num(L.txPoints(tx))}P`);
+    if (tx.type === 'expense' && L.isSmbcCard(state, tx.method)) {
+      const info = L.smbcTxInfo(state, tx);
+      if (info.tagged || info.coupon) {
+        const tags = [info.tagged ? '7%対象' : '', info.coupon ? 'Vクーポン+' + info.coupon.rate + '%' : ''].filter(Boolean);
+        sub.push(`${tags.join('・')} 目安 +${num(L.smbcTxPoints(state, tx))}P`);
+      }
+    }
+    if (tx.store) {
+      const st = L.STORES.find((x) => x.id === tx.store);
+      if (st) sub.push(st.name);
+    }
     return `<li class="tap" data-edit="${esc(tx.id)}">
       <div class="ic-wrap">${catIcon(cat, 34)}</div>
       <div class="grow"><div class="name">${esc(cat.name)}${tx.memo ? `<small>(${esc(tx.memo)})</small>` : ''}</div>
@@ -1360,6 +1530,7 @@
       </div>
       <div class="card"><h3>カテゴリー別の支出</h3>${catRows || '<p class="small muted" style="margin:0">支出の記録がありません</p>'}</div>
       ${pointsCard()}
+      ${smbcReconcileCard()}
       <div class="card"><h3>貯蓄</h3>
         <div class="rows">
           <div>貯蓄の合計</div><div class="total" style="border:none;padding:0">${en(L.savingsBalance(state))}</div>
@@ -1380,14 +1551,41 @@
   function pointsCard() {
     const p = L.pointsSummary(state, reportMonth);
     if (!p.total) return '';
+    const methodRows = p.byMethod
+      .map((x) => {
+        let html = `<div class="sub">${esc(methodName(x.method))}(${x.count}件 ${en(x.amount)})</div><div class="sub">${num(x.points)}P</div>`;
+        if (x.smbc) {
+          const r = x.smbc;
+          html += `<div class="sub sub2">基本 0.5%</div><div class="sub">${num(r.base)}P</div>`;
+          if (r.taggedCount) html += `<div class="sub sub2">7%加算(対象 ${r.taggedCount}件 ${en(r.taggedAmount)})</div><div class="sub">${num(r.bonus7)}P</div>`;
+          if (r.coupon) html += `<div class="sub sub2">Vクーポン(${en(r.couponAmount)})</div><div class="sub">${num(r.coupon)}P</div>`;
+        }
+        return html;
+      })
+      .join('');
     return `<div class="card"><h3>ポイント還元</h3>
       <div class="rows">
         <div>この月のポイント</div><div class="total" style="border:none;padding:0">${num(p.month)}P</div>
-        <div class="sub">対象の支払い ${p.monthCount}件</div><div class="sub">${en(p.monthAmount)}</div>
-        ${p.byMethod.map((x) => `<div class="sub">${esc(methodName(x.method))}(${x.count}件 ${en(x.amount)})</div><div class="sub">${num(x.points)}P</div>`).join('')}
+        ${methodRows}
         <div>これまでの合計</div><div>${num(p.total)}P</div>
       </div>
-      <p class="small muted" style="margin:8px 0 0">入力で「還元の対象」にした支払い(カード・Suica など)の、金額 × 還元率(1ポイント未満切り捨て。Suica の 50円ごと・JAL の 100円ごとのように単位があるときは、その単位に満たない分は数えない)の目安です。率と単位はメニューのカード・電子マネーで変えられます。実際のポイントはカード会社のアプリで確認してください。</p>
+      <p class="small muted" style="margin:8px 0 0">目安です。三井住友NL は200円単位で、基本 0.5% を自動、「7%対象店」にした支払いに 6.5% を加算(${state.settings.nlPointMode === 'perTx' ? '1回ごと' : '月の合計'}で計算。メニューのカードで切り替え)。Vクーポンは合計 20% まで。ほかは「還元の対象」にした支払いの 金額 × 還元率(Suica は 50円ごと、JAL は 100円ごと)。実際のポイントはカード会社のアプリで確認してください。</p>
+    </div>`;
+  }
+
+  // 照合:NL の 7%加算分の見込みを月ごとに(Vpass「コンビニ・飲食店＿スマホのタッチ」の行と比べる)
+  function smbcReconcileCard() {
+    const list = L.smbcBonusByMonth(state);
+    if (!list.length) return '';
+    const rows = list
+      .map(
+        (r) => `<li><div class="grow">${Number(r.month.slice(5))}月 7%加算<div class="small muted">対象 ${r.taggedCount}件 ${en(r.taggedAmount)}${r.coupon ? ` / Vクーポン ${num(r.coupon)}P は別の行` : ''}</div>
+          <div class="small ${r.pending ? 'pending' : 'muted'}">${r.pending ? `付与待ちの可能性(〜${L.parse(r.due).y}/${L.parse(r.due).m}月末)` : '付与済みのはず'}</div></div><div class="total-pt">${num(r.bonus7)}P</div></li>`
+      )
+      .join('');
+    return `<div class="card"><h3>NL 7%加算分の照合</h3>
+      <ul class="list">${rows}</ul>
+      <p class="small muted" style="margin:8px 0 0">Vpass のポイント履歴「コンビニ・飲食店＿スマホのタッチ」の行と比べる見込みです(基本 0.5% は含みません)。加算分は利用月から原則3ヵ月以内に付くので、それまでは付いていなくても正常です。</p>
     </div>`;
   }
 
@@ -1525,8 +1723,14 @@
               <label>支払日<select data-f="paymentDay">${dayOptions(c.paymentDay)}</select></label>
               <label>休日の場合<select data-f="holidayAdjust">${adjustOptions(c.holidayAdjust)}</select></label>
               <label class="full">1回の締めあたりの利用上限(0=なし)<input type="number" data-f="monthlyLimit" inputmode="numeric" min="0" value="${Number(c.monthlyLimit) || 0}"></label>
-              <label>還元率の初期値(%)<input type="number" data-f="pointRate" inputmode="decimal" min="0" max="100" step="0.1" value="${Number(c.pointRate) || 0}"></label>
-              <label>何円ごとに付くか(0=1円単位)<input type="number" data-f="pointUnit" inputmode="numeric" min="0" value="${Number(c.pointUnit) || 0}"></label>
+              ${
+                c.pointScheme === 'smbc'
+                  ? `<label class="full">ポイントの計算(基本 0.5% + 7%対象店 6.5%、200円単位)<select id="set-nl-mode">
+                <option value="monthly" ${st.nlPointMode !== 'perTx' ? 'selected' : ''}>月の合計でまとめて計算</option>
+                <option value="perTx" ${st.nlPointMode === 'perTx' ? 'selected' : ''}>1回ごとに計算</option></select></label>`
+                  : `<label>還元率の初期値(%)<input type="number" data-f="pointRate" inputmode="decimal" min="0" max="100" step="0.1" value="${Number(c.pointRate) || 0}"></label>
+              <label>何円ごとに付くか(0=1円単位)<input type="number" data-f="pointUnit" inputmode="numeric" min="0" value="${Number(c.pointUnit) || 0}"></label>`
+              }
             </div>
             <div class="preview">${cardPreview(c)}</div>
             <div class="row-actions"><button type="button" class="btn small danger" data-del-card="${esc(c.id)}">削除</button></div>
@@ -1688,6 +1892,8 @@
         day: Number($('#set-payday-day').value) || 25,
         holidayAdjust: $('#set-payday-adjust').value || 'prev'
       };
+    } else if (t.id === 'set-nl-mode') {
+      state.settings.nlPointMode = t.value === 'perTx' ? 'perTx' : 'monthly';
     } else if (t.id === 'set-basis') {
       state.settings.basis = t.value;
     } else if (t.id === 'import-file') {

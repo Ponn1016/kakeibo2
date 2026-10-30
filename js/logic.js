@@ -335,26 +335,217 @@
     return Math.floor(Math.round(base * Number(tx.pointRate) * 1e6) / 1e8);
   }
 
-  // 月(mk)のポイントと、これまでの合計
-  function pointsSummary(state, mk) {
-    const txs = (state.transactions || []).filter((t) => txPoints(t) > 0);
-    const inMonth = txs.filter((t) => monthKey(t.date) === mk);
-    return {
-      month: inMonth.reduce((s, t) => s + txPoints(t), 0),
-      monthCount: inMonth.length,
-      monthAmount: inMonth.reduce((s, t) => s + Number(t.amount), 0),
-      // 支払方法ごと(JAL のマイル・Vポイント・JRE POINT などポイントの種類が違うので分けて見せる)
-      byMethod: Object.values(
-        inMonth.reduce((m, t) => {
-          const x = m[t.method] || (m[t.method] = { method: t.method, points: 0, count: 0, amount: 0 });
-          x.points += txPoints(t);
-          x.count += 1;
-          x.amount += Number(t.amount);
-          return m;
-        }, {})
-      ),
-      total: txs.reduce((s, t) => s + txPoints(t), 0)
+  // ---------- 三井住友NL(Vポイント):基本 0.5% + 7%対象店の加算 6.5% + Vクーポン ----------
+  /*
+   * 200円ごとに、基本 1P(0.5%)、7%対象店なら加算 13P(6.5%)、Vクーポンならその率の分。
+   * 合計 20%(200円で 40P)を超える分は付かない。
+   * 計算のまとまりは settings.nlPointMode:'monthly'(月合計、初期値)/ 'perTx'(1回ごと)。
+   * 7%対象はスマホのタッチ決済・モバイルオーダーだけ(実カードのタッチ・iD・差し込みは対象外)。
+   * 公式の明文ではなく明細から確かめた計算なので、切り替えられるようにしている。
+   */
+  const SMBC_UNIT = 200;
+  const SMBC_BASE = 1;
+  const SMBC_BONUS7 = 13;
+  const SMBC_CAP = 40;
+
+  // Vクーポン(キャンペーン)。with7:7%と併用できるか、monthly:月ごとに獲得し直す
+  const CAMPAIGNS = [
+    { id: 'mcd-mo', name: 'マクドナルド モバイルオーダー', short: 'マック MO', rate: 5, with7: true, from: '2026-10-01', to: '2026-11-30', monthly: true },
+    { id: 'mcd-delivery', name: 'マックデリバリー', short: 'マックデリバリー', rate: 10, with7: false, from: '2026-10-01', to: '2026-11-30', monthly: true }
+  ];
+
+  function campaignsOf(state) {
+    return (state && state.campaigns) || CAMPAIGNS;
+  }
+
+  function activeCampaigns(state, date) {
+    return campaignsOf(state).filter((c) => date >= c.from && date <= c.to);
+  }
+
+  function isSmbcCard(state, method) {
+    const c = findCard(state, method);
+    return !!(c && c.pointScheme === 'smbc');
+  }
+
+  // その記録に効く Vクーポン(期間外なら無し)と、7%対象かどうか(7%と併用できないクーポンなら対象外)
+  function smbcTxInfo(state, tx) {
+    const c = tx.coupon ? campaignsOf(state).find((x) => x.id === tx.coupon) : null;
+    const coupon = c && tx.date >= c.from && tx.date <= c.to ? c : null;
+    const tagged = !!tx.nl7 && !(coupon && !coupon.with7);
+    return { coupon, tagged };
+  }
+
+  // 200円あたりのクーポンのポイント。合計 20% を超える分は付かない
+  function couponPerUnit(coupon, tagged) {
+    const per = Math.round(coupon.rate * (SMBC_UNIT / 100));
+    return Math.max(0, Math.min(per, SMBC_CAP - SMBC_BASE - (tagged ? SMBC_BONUS7 : 0)));
+  }
+
+  function smbcPoints(state, list, mode) {
+    const units = (amt) => Math.floor(amt / SMBC_UNIT);
+    const sum = (arr) => arr.reduce((s, t) => s + Number(t.amount), 0);
+    const info = list.map((t) => ({ t, ...smbcTxInfo(state, t) }));
+    const tagged = info.filter((x) => x.tagged).map((x) => x.t);
+    const r = {
+      amount: sum(list),
+      count: list.length,
+      taggedAmount: sum(tagged),
+      taggedCount: tagged.length,
+      couponAmount: sum(info.filter((x) => x.coupon).map((x) => x.t)),
+      base: 0,
+      bonus7: 0,
+      coupon: 0
     };
+    if (mode === 'perTx') {
+      info.forEach(({ t, tagged: tg, coupon }) => {
+        const u = units(Number(t.amount));
+        r.base += u * SMBC_BASE;
+        if (tg) r.bonus7 += u * SMBC_BONUS7;
+        if (coupon) r.coupon += u * couponPerUnit(coupon, tg);
+      });
+    } else {
+      r.base = units(r.amount) * SMBC_BASE;
+      r.bonus7 = units(r.taggedAmount) * SMBC_BONUS7;
+      // クーポンは、同じクーポン・同じ 7% 対象どうしでまとめる
+      const groups = {};
+      info.filter((x) => x.coupon).forEach((x) => {
+        const k = x.coupon.id + '|' + x.tagged;
+        (groups[k] = groups[k] || { coupon: x.coupon, tagged: x.tagged, amount: 0 }).amount += Number(x.t.amount);
+      });
+      Object.values(groups).forEach((g) => (r.coupon += units(g.amount) * couponPerUnit(g.coupon, g.tagged)));
+    }
+    r.points = r.base + r.bonus7 + r.coupon;
+    return r;
+  }
+
+  function smbcMode(state) {
+    return ((state.settings || {}).nlPointMode) === 'perTx' ? 'perTx' : 'monthly';
+  }
+
+  // NL の月(mk)のポイント(使った日の月でまとめる)
+  function smbcMonthPoints(state, mk, mode) {
+    const list = (state.transactions || []).filter((t) => t.type === 'expense' && isSmbcCard(state, t.method) && monthKey(t.date) === mk);
+    return smbcPoints(state, list, mode || smbcMode(state));
+  }
+
+  // 1回分の目安(入力画面・カレンダー用。月合計のときは月の端数で前後する)
+  function smbcTxPoints(state, tx) {
+    return smbcPoints(state, [tx], 'perTx').points;
+  }
+
+  /*
+   * 照合用:月ごとの 7% 加算分とクーポン分の見込み。
+   * Vpass の「コンビニ・飲食店＿スマホのタッチ」の行と比べる。加算分の付与は利用月から原則 3ヵ月以内なので、
+   * その月の 3ヵ月後の月末(due)までは付与待ちの可能性がある
+   */
+  function smbcBonusByMonth(state, todayDate) {
+    const now = todayDate || today();
+    const months = new Set();
+    (state.transactions || []).forEach((t) => {
+      if (t.type !== 'expense' || !isSmbcCard(state, t.method)) return;
+      const info = smbcTxInfo(state, t);
+      if (info.tagged || info.coupon) months.add(monthKey(t.date));
+    });
+    return [...months]
+      .sort()
+      .reverse()
+      .map((mk) => {
+        const r = smbcMonthPoints(state, mk);
+        const [y, m] = mk.split('-').map(Number);
+        const due = ymd(y, m + 3, daysInMonth(new Date(y, m + 2, 1).getFullYear(), new Date(y, m + 2, 1).getMonth() + 1));
+        return { month: mk, taggedAmount: r.taggedAmount, taggedCount: r.taggedCount, bonus7: r.bonus7, coupon: r.coupon, due, pending: now <= due };
+      });
+  }
+
+  // 月初の「Vクーポン再獲得」:今月有効で月ごとに獲得し直すクーポンのうち、今月まだ「獲得した」にしていないもの
+  function couponReminders(state, todayDate) {
+    const now = todayDate || today();
+    const ack = ((state.settings || {}).couponAck || {})[monthKey(now)] || [];
+    return activeCampaigns(state, now).filter((c) => c.monthly && !ack.includes(c.id));
+  }
+
+  // 月(mk)のポイントと、これまでの合計。NL は月ごとの計算、ほかは記録ごと(率 × 単位)
+  function pointsSummary(state, mk) {
+    const all = state.transactions || [];
+    const generic = all.filter((t) => !isSmbcCard(state, t.method) && txPoints(t) > 0);
+    const inMonth = generic.filter((t) => monthKey(t.date) === mk);
+    const byMethod = Object.values(
+      inMonth.reduce((m, t) => {
+        const x = m[t.method] || (m[t.method] = { method: t.method, points: 0, count: 0, amount: 0 });
+        x.points += txPoints(t);
+        x.count += 1;
+        x.amount += Number(t.amount);
+        return m;
+      }, {})
+    );
+    const smbcTxs = all.filter((t) => t.type === 'expense' && isSmbcCard(state, t.method));
+    const nl = smbcMonthPoints(state, mk);
+    // 支払方法ごと(JAL のマイル・Vポイント・JRE POINT などポイントの種類が違うので分けて見せる)
+    if (nl.count) {
+      const method = smbcTxs.find((t) => monthKey(t.date) === mk).method;
+      byMethod.push({ method, points: nl.points, count: nl.count, amount: nl.amount, smbc: nl });
+    }
+    const nlMonths = [...new Set(smbcTxs.map((t) => monthKey(t.date)))];
+    return {
+      month: inMonth.reduce((s, t) => s + txPoints(t), 0) + nl.points,
+      monthCount: inMonth.length + nl.count,
+      monthAmount: inMonth.reduce((s, t) => s + Number(t.amount), 0) + nl.amount,
+      byMethod,
+      total: generic.reduce((s, t) => s + txPoints(t), 0) + nlMonths.reduce((s, m) => s + smbcMonthPoints(state, m).points, 0)
+    };
+  }
+
+  // ---------- お店ごとの還元ランキング ----------
+  /*
+   * pay:'smbc'(三井住友NL)/'jal'(JALカード)/'wesmo'(Wesmo!)/'icoca'(ICOCA)
+   * smbc7:NL の 7%対象店か。rules:その支払方法の率(期間・月の指定があれば、その間だけ)
+   */
+  const WESMO_OSHITOKU = { pay: 'wesmo', rate: 4, to: '2026-12-29', note: '推しトク(〜2026/12/29)' };
+  const JAL_TOKUYAKU_REAL = { pay: 'jal', rate: 2, note: '特約店。実カード(Apple Pay不可)' };
+  const STORES = [
+    { id: 'seven', name: 'セブン-イレブン', smbc7: true },
+    { id: 'lawson', name: 'ローソン', smbc7: true },
+    { id: 'famima', name: 'ファミリーマート', smbc7: true, rules: [{ pay: 'jal', rate: 2, to: '2025-10-31', note: '特約店(2025/10/31で終了)' }] },
+    { id: 'mcd', name: 'マクドナルド', smbc7: true, campaigns: ['mcd-mo', 'mcd-delivery'] },
+    { id: 'kfc', name: 'ケンタッキー', smbc7: true, rules: [WESMO_OSHITOKU] },
+    { id: 'matsuya', name: '松屋', rules: [WESMO_OSHITOKU] },
+    { id: 'yamada', name: 'ヤマダデンキ', rules: [WESMO_OSHITOKU] },
+    { id: 'joshin', name: 'Joshin', rules: [{ pay: 'wesmo', rate: 4, from: '2026-11-01', to: '2026-11-30', note: '推しトク(11月のみ)' }] },
+    { id: 'matsukiyo', name: 'マツモトキヨシ', rules: [JAL_TOKUYAKU_REAL] },
+    { id: 'cocokara', name: 'ココカラファイン', rules: [JAL_TOKUYAKU_REAL] }
+  ];
+
+  function storeRule(store, pay, date) {
+    return (store.rules || []).find((r) => r.pay === pay && (!r.from || date >= r.from) && (!r.to || date <= r.to)) || null;
+  }
+
+  // お店(storeId)で日付 date に払うときの、支払方法ごとの還元率(%)を高い順に
+  function storeRanking(state, storeId, date) {
+    const store = STORES.find((x) => x.id === storeId);
+    if (!store) return [];
+    const smbc = (state.cards || []).find((c) => c.pointScheme === 'smbc' && !c.archived);
+    const jal = (state.cards || []).find((c) => c.brand === 'jal' && !c.archived);
+    const list = [];
+    if (smbc) {
+      const base = (SMBC_BASE / SMBC_UNIT) * 100;
+      const with7 = base + (store.smbc7 ? (SMBC_BONUS7 / SMBC_UNIT) * 100 : 0);
+      list.push({ pay: 'smbc', method: smbc.id, name: smbc.name, rate: with7, nl7: !!store.smbc7, note: store.smbc7 ? '7%対象(スマホのタッチ決済・モバイルオーダー)' : '' });
+      activeCampaigns(state, date)
+        .filter((c) => (store.campaigns || []).includes(c.id))
+        .forEach((c) => {
+          const tagged = !!store.smbc7 && c.with7;
+          const rate = base + (tagged ? (SMBC_BONUS7 / SMBC_UNIT) * 100 : 0) + (couponPerUnit(c, tagged) / SMBC_UNIT) * 100;
+          list.push({ pay: 'smbc', method: smbc.id, name: smbc.name, rate, nl7: tagged, coupon: c.id, note: c.name + ' Vクーポン +' + c.rate + '%' + (c.with7 ? '' : '(7%対象外)') });
+        });
+    }
+    if (jal) {
+      const r = storeRule(store, 'jal', date);
+      list.push({ pay: 'jal', method: jal.id, name: jal.name, rate: r ? r.rate : Number(jal.pointRate) || 1, note: r ? r.note : '' });
+    }
+    const w = storeRule(store, 'wesmo', date);
+    if (w) list.push({ pay: 'wesmo', method: null, name: 'Wesmo!', rate: w.rate, note: w.note });
+    list.push({ pay: 'icoca', method: null, name: 'ICOCA', rate: 0, note: '関東では買い物も乗車も0%(WESTERポイントは Wesmo! で)' });
+    return list.sort((a, b) => b.rate - a.rate);
   }
 
   /*
@@ -687,6 +878,16 @@
     paydaysAround,
     txPoints,
     pointsSummary,
+    CAMPAIGNS,
+    STORES,
+    activeCampaigns,
+    isSmbcCard,
+    smbcTxInfo,
+    smbcMonthPoints,
+    smbcTxPoints,
+    smbcBonusByMonth,
+    couponReminders,
+    storeRanking,
     isSavings,
     dailyTotals,
     suggestPayment,
