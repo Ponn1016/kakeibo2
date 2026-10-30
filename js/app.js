@@ -99,14 +99,14 @@
       [-12, 'expense', 1140, 'daily', 'cardB', '洗剤'],
       [-10, 'expense', 3000, 'other', 'cardB', 'Suicaチャージ', null, { chargeTo: 'suica' }],
       [-9, 'expense', 6300, 'social', 'cardB', '飲み会'],
-      [-7, 'expense', 690, 'food', 'cardB', 'マクドナルド', null, { nl7: true, coupon: 'mcd-mo', store: 'mcd' }],
+      [-7, 'expense', 690, 'food', 'cardB', 'マクドナルド', null, { nl7: true, coupon: 'mcd-mo' }],
       [-8, 'expense', 178, 'other', 'suica', '電車', null, { pointRate: 2, pointUnit: 50 }],
       [-8, 'expense', 178, 'other', 'suica', '電車', null, { pointRate: 2, pointUnit: 50 }],
       [-6, 'expense', 2400, 'beauty', 'cardA', ''],
       [-4, 'expense', 740, 'food', 'cash', ''],
       [-2, 'expense', 1000, 'social', 'cash', ''],
       [-1, 'expense', 750, 'food', 'cash', 'ランチ'],
-      [-1, 'expense', 780, 'food', 'cardB', 'コンビニ', null, { nl7: true, store: 'seven' }],
+      [-1, 'expense', 780, 'food', 'cardB', 'コンビニ', null, { nl7: true }],
       [-3, 'expense', 1480, 'daily', 'paypay', 'ドラッグストア'],
       [-5, 'expense', 650, 'food', 'paypay', 'カフェ'],
       [-5, 'charge', 1000, null, 'paypay', ''],
@@ -476,6 +476,16 @@
     if (go) show(go.dataset.go);
   });
 
+  // iOS はビューポートの指定だけではピンチでの拡大を止められないので、ジェスチャーを止める
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach((type) => document.addEventListener(type, (e) => e.preventDefault(), { passive: false }));
+  document.addEventListener(
+    'touchmove',
+    (e) => {
+      if (e.touches.length > 1) e.preventDefault();
+    },
+    { passive: false }
+  );
+
   // ---------- ホーム ----------
   // 「今月あといくら使えるか」だけを大きく見せる
 
@@ -620,7 +630,7 @@
   // work: 時給ごとの入力中の時間と分 { "1830": { h: "7", m: "30" }, ... }
   // point: この支出をポイント還元(7%還元など)の対象にするか
   // pointRate: この支出の還元率(%)。オンにしたときはメニューの初期値が入る
-  const form = { editingId: null, type: 'expense', date: L.today(), amount: '', category: null, method: 'cash', memo: '', work: {}, incomeMode: 'hourly', point: false, pointRate: '', pointUnit: 0, nl7: false, coupon: '', store: '' };
+  const form = { editingId: null, type: 'expense', date: L.today(), amount: '', category: null, method: 'cash', memo: '', work: {}, incomeMode: 'hourly', point: false, pointRate: '', pointUnit: 0, nl7: false, coupon: '' };
   let methodTouched = false;
   let returnView = 'home'; // 編集を終えたときに戻る画面
 
@@ -638,7 +648,6 @@
     form.pointUnit = 0;
     form.nl7 = false;
     form.coupon = '';
-    form.store = '';
     methodTouched = false;
   }
 
@@ -665,8 +674,7 @@
       pointRate: Number(tx.pointRate) > 0 ? String(tx.pointRate) : '',
       pointUnit: Number(tx.pointUnit) || 0,
       nl7: !!tx.nl7,
-      coupon: tx.coupon || '',
-      store: tx.store || ''
+      coupon: tx.coupon || ''
     });
     methodTouched = true;
     show('input');
@@ -842,7 +850,6 @@
     renderWalletInfo();
     renderPointToggle();
     renderSmbcRow();
-    renderStore();
   }
 
   // 支払方法ごとの還元率の初期値(%)と、何円ごとにポイントが付くか(0 なら 1円単位)。メニューで設定する
@@ -894,70 +901,6 @@
   $('#coupon-select').addEventListener('change', (e) => {
     form.coupon = e.target.value;
     renderSmbcRow();
-  });
-
-  // ---------- お店:選ぶと支払方法ごとの還元率を高い順に出し、NL の 7%対象・JAL の特約店の率を入れる ----------
-  function renderStore() {
-    const row = $('#store-row');
-    row.hidden = form.type !== 'expense';
-    const rank = $('#store-rank');
-    if (row.hidden) return (rank.hidden = true);
-    const sel = $('#store-select');
-    sel.innerHTML = '<option value="">指定なし</option>' + L.STORES.map((x) => `<option value="${esc(x.id)}" ${x.id === form.store ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
-    const list = form.store ? L.storeRanking(state, form.store, form.date) : [];
-    rank.hidden = !list.length;
-    rank.innerHTML = list
-      .map(
-        (r, i) => `<button type="button" class="rank-item ${r.method === form.method && (r.coupon || '') === form.coupon ? 'active' : ''}" ${r.method ? `data-rank="${i}"` : 'disabled'}>
-          <b>${i + 1}</b><span class="grow">${esc(r.name)}${r.note ? `<small>${esc(r.note)}</small>` : ''}${r.method ? '' : '<small>アプリに未登録</small>'}</span><span class="rate">${fmtRate(r.rate)}%</span></button>`
-      )
-      .join('');
-  }
-
-  function fmtRate(n) {
-    return String(Math.round(n * 10) / 10);
-  }
-
-  // お店と支払方法に合わせて、7%対象・クーポン・特約店の率を入れる
-  function applyStoreDefaults() {
-    if (!form.store) return;
-    const list = L.storeRanking(state, form.store, form.date).filter((r) => r.method === form.method);
-    const smbc = list.find((r) => r.pay === 'smbc' && (r.coupon || '') === form.coupon) || list.find((r) => r.pay === 'smbc' && !r.coupon);
-    if (smbc) {
-      form.nl7 = smbc.nl7;
-      return;
-    }
-    const jal = list.find((r) => r.pay === 'jal');
-    if (jal && jal.rate !== pointRate(form.method)) {
-      form.point = true;
-      form.pointRate = String(jal.rate);
-      form.pointUnit = pointUnit(form.method);
-    }
-  }
-
-  $('#store-select').addEventListener('change', (e) => {
-    form.store = e.target.value;
-    form.coupon = '';
-    // 支払方法をまだ自分で選んでいなければ、そのお店でいちばん還元の多い支払方法にする
-    const top = form.store && !methodTouched ? L.storeRanking(state, form.store, form.date).find((r) => r.method) : null;
-    if (top) {
-      form.method = top.method;
-      form.coupon = top.coupon || '';
-      methodTouched = true;
-    }
-    applyStoreDefaults();
-    renderMethods();
-  });
-
-  $('#store-rank').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-rank]');
-    if (!b) return;
-    const r = L.storeRanking(state, form.store, form.date)[Number(b.dataset.rank)];
-    form.method = r.method;
-    form.coupon = r.coupon || '';
-    methodTouched = true;
-    applyStoreDefaults();
-    renderMethods();
   });
 
   // カード払い・還元率のある電子マネーのときに出す「還元の対象」ボタン。オンにすると還元率(初期値はメニューの値)を入れられる
@@ -1164,7 +1107,6 @@
     }
     form.method = b.dataset.method;
     if (form.coupon && !L.isSmbcCard(state, form.method)) form.coupon = '';
-    applyStoreDefaults();
     methodTouched = true;
     renderMethods();
   });
@@ -1209,7 +1151,6 @@
       if (form.coupon) data.coupon = form.coupon;
       if (form.nl7 && L.smbcTxInfo(state, { ...data, nl7: true }).tagged) data.nl7 = true;
     }
-    if (data.type === 'expense' && form.store) data.store = form.store;
     if (form.editingId) {
       const tx = state.transactions.find((t) => t.id === form.editingId);
       delete tx.hours;
@@ -1217,7 +1158,6 @@
       delete tx.pointUnit;
       delete tx.nl7;
       delete tx.coupon;
-      delete tx.store;
       Object.assign(tx, data);
       save();
       toast('変更しました');
@@ -1381,10 +1321,6 @@
         const tags = [info.tagged ? '7%対象' : '', info.coupon ? 'Vクーポン+' + info.coupon.rate + '%' : ''].filter(Boolean);
         sub.push(`${tags.join('・')} 目安 +${num(L.smbcTxPoints(state, tx))}P`);
       }
-    }
-    if (tx.store) {
-      const st = L.STORES.find((x) => x.id === tx.store);
-      if (st) sub.push(st.name);
     }
     return `<li class="tap" data-edit="${esc(tx.id)}">
       <div class="ic-wrap">${catIcon(cat, 34)}</div>

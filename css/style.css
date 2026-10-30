@@ -26,6 +26,9 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; }
+/* ピンチでの拡大・ダブルタップでの拡大をさせない(アプリとして使うので画面を固定する) */
+html { touch-action: pan-x pan-y; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+button, a, input, select, label { touch-action: manipulation; }
 
 body {
   background: var(--bg);
@@ -285,20 +288,10 @@ main { max-width: 600px; margin: 0 auto; padding: 0 16px 16px; }
 .point-rate .point-unit { font-size: 12px; color: var(--muted); }
 .nl-row { flex-wrap: wrap; }
 .nl-row .point-toggle:disabled { opacity: .6; }
-.coupon-select { border: 1px solid var(--line); padding: 6px 8px; font-size: 13px; max-width: 100%; }
+.coupon-select { border: 1px solid var(--line); padding: 6px 8px; font-size: 16px; max-width: 100%; }
 .coupon-select[hidden] { display: none; }
 .nl-row #nl-pts { font-size: 13px; color: var(--mint-strong); font-variant-numeric: tabular-nums; }
 .nl-note { flex-basis: 100%; margin: 0; font-size: 11px; color: var(--muted); }
-.store-select { flex: 1; min-width: 0; border: none; padding: 10px 12px; font-size: 16px; }
-.store-rank { display: grid; gap: 4px; padding: 8px 0 4px; }
-.store-rank[hidden] { display: none; }
-.rank-item { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); background: var(--bg); border-radius: 10px; padding: 6px 10px; text-align: left; }
-.rank-item b { width: 18px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.rank-item .grow { flex: 1; min-width: 0; font-weight: 700; font-size: 14px; }
-.rank-item small { display: block; font-weight: 400; font-size: 11px; color: var(--muted); }
-.rank-item .rate { font-weight: 800; font-variant-numeric: tabular-nums; }
-.rank-item.active { border-color: var(--mint-strong); background: var(--mint-soft); }
-.rank-item:disabled { opacity: .6; cursor: default; }
 .coupon-banner { display: flex; align-items: center; gap: 10px; margin-top: 12px; border: 1px solid var(--warn); border-radius: 14px; padding: 10px 14px; font-size: 13px; }
 .coupon-banner .grow { flex: 1; min-width: 0; }
 .point-rate input { width: 64px; padding: 6px 8px; font-size: 16px; font-weight: 700; text-align: right; outline: none; }

@@ -418,26 +418,3 @@ test('ポイントの集計:NL は月ごとの計算、ほかは記録ごと', (
   assert.deepEqual(p.byMethod.map((x) => [x.method, x.points]), [['a', 10], ['b', 75]]);
   assert.equal(p.total, 85 + 28);
 });
-
-test('お店ごとの還元ランキング', () => {
-  const s = nlState([]);
-  const rank = (id, date) => L.storeRanking(s, id, date).map((r) => r.pay + (r.coupon ? ':' + r.coupon : '') + ' ' + r.rate);
-  // ケンタッキーは NL の 7% が Wesmo! 推しトク 4% より上
-  assert.deepEqual(rank('kfc', '2026-11-01'), ['smbc 7', 'wesmo 4', 'jal 1', 'icoca 0']);
-  // 推しトクは 2026/12/29 まで
-  assert.deepEqual(rank('kfc', '2026-12-30'), ['smbc 7', 'jal 1', 'icoca 0']);
-  assert.deepEqual(rank('matsuya', '2026-11-01'), ['wesmo 4', 'jal 1', 'smbc 0.5', 'icoca 0']);
-  // Joshin の推しトクは 11月だけ
-  assert.deepEqual(rank('joshin', '2026-10-30'), ['jal 1', 'smbc 0.5', 'icoca 0']);
-  assert.equal(rank('joshin', '2026-11-15')[0], 'wesmo 4');
-  // ファミマの JAL 特約店は 2025/10/31 で終了
-  assert.deepEqual(rank('famima', '2025-10-31'), ['smbc 7', 'jal 2', 'icoca 0']);
-  assert.deepEqual(rank('famima', '2026-10-30'), ['smbc 7', 'jal 1', 'icoca 0']);
-  // マツキヨ・ココカラは JAL 特約店 2%(実カード)
-  assert.equal(rank('matsukiyo', '2026-11-01')[0], 'jal 2');
-  assert.match(L.storeRanking(s, 'cocokara', '2026-11-01')[0].note, /実カード/);
-  // マクドナルド:モバイルオーダー + Vクーポンで 12%、デリバリーは 10.5%(7%対象外)
-  assert.deepEqual(rank('mcd', '2026-11-01'), ['smbc:mcd-mo 12', 'smbc:mcd-delivery 10.5', 'smbc 7', 'jal 1', 'icoca 0']);
-  assert.deepEqual(rank('mcd', '2026-12-01'), ['smbc 7', 'jal 1', 'icoca 0']);
-  assert.deepEqual(L.storeRanking(s, 'unknown', '2026-11-01'), []);
-});
