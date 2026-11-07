@@ -418,3 +418,28 @@ test('ポイントの集計:NL は月ごとの計算、ほかは記録ごと', (
   assert.deepEqual(p.byMethod.map((x) => [x.method, x.points]), [['a', 10], ['b', 75]]);
   assert.equal(p.total, 85 + 28);
 });
+
+test('財布の現金からチャージする電子マネー(PASMO):チャージは現金での支払い、使ったときは残高が減るだけ', () => {
+  const tracked = (since) => ({
+    settings: {},
+    cards: [cardA, cardB],
+    wallets: [{ id: 'cash', name: '現金', chargeFrom: 'bank', since, balanceAdjust: 0 }, { id: 'pasmo', name: 'PASMO', chargeFrom: 'cash', since: '2026-10-01T00:00:00.000Z' }],
+    transactions: [
+      { id: 1, type: 'expense', date: '2026-11-01', amount: 10000, method: 'bank', chargeTo: 'cash', createdAt: '2026-11-01T00:00:00.000Z' }, // ATM
+      { id: 2, type: 'expense', date: '2026-11-02', amount: 3000, method: 'cash', chargeTo: 'pasmo', createdAt: '2026-11-02T00:00:00.000Z' }, // PASMO チャージ
+      { id: 3, type: 'expense', date: '2026-11-03', amount: 178, method: 'pasmo', createdAt: '2026-11-03T00:00:00.000Z' } // 電車
+    ]
+  });
+  // 財布を管理しているとき:ATM の 10,000円だけが支出。財布 7,000円、PASMO 2,822円
+  const s = tracked('2026-10-01T00:00:00.000Z');
+  assert.equal(L.monthSummary(s, '2026-11', '2026-11-03').spent, 10000);
+  assert.equal(L.walletBalance(s, s.wallets[0]), 7000);
+  assert.equal(L.walletBalance(s, s.wallets[1]), 2822);
+  assert.equal(L.isPrepaidUse(s, s.transactions[2]), true);
+  assert.equal(L.dailyTotals(s, '2026-11')['2026-11-03'].expense, 0);
+  // 財布を管理していないとき:チャージが現金の支払いとして支出、PASMO で使った分は数えない
+  const u = tracked(undefined);
+  u.transactions.shift();
+  assert.equal(L.monthSummary(u, '2026-11', '2026-11-03').spent, 3000);
+  assert.equal(L.walletBalance(u, u.wallets[1]), 2822);
+});

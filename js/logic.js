@@ -764,6 +764,7 @@
    * 入れた時点で支出として数える財布・電子マネーでの支払いか。
    *   wallet.chargeFrom = カードの id … カードからチャージ(Suica など)
    *   wallet.chargeFrom = 'bank'      … メイン口座から引き出し(現金。wallet.since を入れてから管理を始める)
+   *   wallet.chargeFrom = 'cash'      … 財布の現金からチャージ(PASMO など)。チャージは現金での支払いとして記録する
    * チャージ・引き出しの時点で支出として数えているので、支払いは残高を減らすだけで支出には数えない
    */
   function isPrepaidUse(state, t) {
@@ -772,7 +773,7 @@
     if (!w || !w.chargeFrom) return false;
     if (w.chargeFrom === 'bank' && !w.since) return false;
     if (w.since && String(t.createdAt) < w.since) return false;
-    return w.chargeFrom === 'bank' || isCard(state, w.chargeFrom);
+    return w.chargeFrom === 'bank' || w.chargeFrom === 'cash' || isCard(state, w.chargeFrom);
   }
 
   /*
