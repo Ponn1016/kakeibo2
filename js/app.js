@@ -59,6 +59,7 @@
       // コード決済・電子マネー。口座からチャージして使うので、使った日に支払ったものとして扱う
       // chargeFrom にカードの id があると、そのカードからチャージする(チャージした時点で支出)。なければメイン口座から
       // chargeFrom が 'bank' なら、メイン口座から引き出した時点で支出(現金。財布の残高を入れてから管理を始める)
+      // chargeFrom が 'cash' なら、財布の現金からチャージする(PASMO など。チャージは現金での支払いとして記録)
       // pointRate があると、その支払いを「還元の対象」にできる(Suica は 50円ごとに 1P = 2%)
       wallets: [{ id: 'paypay', name: 'PayPay' }, { id: 'suica', name: 'Suica', chargeFrom: 'cardB', pointRate: 2, pointUnit: 50 }, { id: 'cash', name: '現金', chargeFrom: 'bank' }],
       // 毎月決まった額の収入。金額 0 のあいだは使わない
@@ -697,7 +698,7 @@
     $('#method-row').hidden = !isExpense;
     $('#suggest-hint').hidden = !isExpense;
     if (isExpense) renderMethods();
-    else $('#wallet-info').hidden = $('#point-row').hidden = true;
+    else $('#wallet-info').hidden = $('#point-row').hidden = $('#nl-row').hidden = true;
 
     const hourly = isHourly();
     $('#income-mode-row').hidden = !isSalary();
@@ -971,11 +972,16 @@
   async function recordCharge(w, suggest, message) {
     const card = w.chargeFrom ? findCard(w.chargeFrom) : null;
     const fromBank = w.chargeFrom === 'bank';
+    const fromCash = w.chargeFrom === 'cash';
     const note = card
       ? `${card.name}からのチャージなので、チャージした時点で支出として数えます(${mdw(L.withdrawalDateFor(card, form.date))} 引落)。`
       : fromBank
         ? 'メイン口座からの引き出しなので、引き出した時点で支出として数えます。'
-        : '口座からの移動なので、あと使えるお金は減りません。';
+        : fromCash
+          ? cashTracked()
+            ? '財布の現金からのチャージなので、財布の残高が減ります(現金は ATM で引き出した時点で支出に数えているので、あと使えるお金は減りません)。'
+            : '財布の現金からのチャージなので、チャージした時点で現金の支払い(支出)として数えます。'
+          : '口座からの移動なので、あと使えるお金は減りません。';
     const title = fromBank ? `ATM で引き出した金額(${mdw(form.date)})` : `${w.name}にチャージした金額(${mdw(form.date)})`;
     const amount = await ask(`${message ? message + '\n' : ''}${title}\n${note}`, {
       withInput: true,
@@ -983,6 +989,10 @@
       okLabel: '記録する'
     });
     if (!amount) return false;
+    if (fromCash && cashTracked() && L.walletBalance(state, findWallet('cash')) < amount) {
+      toast('財布の現金が足りません。先に ATM の引き出しを記録してください');
+      return false;
+    }
     const base = { id: uid(), createdAt: new Date().toISOString(), date: form.date, amount };
     if (card) {
       // カードの支出として記録し、chargeTo で電子マネーの残高に足す
@@ -990,6 +1000,9 @@
     } else if (fromBank) {
       // メイン口座からの支出として記録し、chargeTo で財布の残高に足す
       state.transactions.push({ ...base, type: 'expense', method: 'bank', category: 'other', memo: 'ATM引き出し', chargeTo: w.id });
+    } else if (fromCash) {
+      // 財布の現金での支払いとして記録し、chargeTo で電子マネーの残高に足す
+      state.transactions.push({ ...base, type: 'expense', method: 'cash', category: 'other', memo: w.name + 'チャージ', chargeTo: w.id });
     } else {
       state.transactions.push({ ...base, type: 'charge', method: w.id, memo: '' });
     }
@@ -1313,7 +1326,12 @@
     else if (tx.type === 'expense') sub.push(methodName(tx.method));
     if (tx.hours && tx.hours.length) sub.push(hoursText(tx.hours));
     if (L.isSavings(tx)) sub.push('使えるお金には含めません');
-    if (L.isPrepaidUse(state, tx)) sub.push(tx.method === 'cash' ? '引き出し時に支出済み' : 'チャージ時に支出済み');
+    if (L.isPrepaidUse(state, tx)) {
+      // 財布の現金からチャージする電子マネー(PASMO など)は、財布を管理していれば ATM で引き出した時点で支出済み
+      const w = findWallet(tx.method);
+      const atAtm = tx.method === 'cash' || (w && w.chargeFrom === 'cash' && cashTracked());
+      sub.push(atAtm ? '引き出し時に支出済み' : 'チャージ時に支出済み');
+    }
     if (L.txPoints(tx) && !L.isSmbcCard(state, tx.method)) sub.push(`${tx.pointRate}%還元 +${num(L.txPoints(tx))}P`);
     if (tx.type === 'expense' && L.isSmbcCard(state, tx.method)) {
       const info = L.smbcTxInfo(state, tx);
@@ -1631,6 +1649,7 @@
               <label class="full">チャージ元<select id="wallet-from-${esc(w.id)}" data-wallet-from="${esc(w.id)}">
                 <option value="" ${!w.chargeFrom ? 'selected' : ''}>メイン口座(お店で使ったときに支出)</option>
                 <option value="bank" ${w.chargeFrom === 'bank' ? 'selected' : ''}>メイン口座(入れた・引き出した時点で支出)</option>
+                ${w.id === 'cash' ? '' : `<option value="cash" ${w.chargeFrom === 'cash' ? 'selected' : ''}>財布の現金(チャージした時点で現金の支払い)</option>`}
                 ${activeCards().map((c) => `<option value="${esc(c.id)}" ${w.chargeFrom === c.id ? 'selected' : ''}>${esc(c.name)}(チャージした時点で支出)</option>`).join('')}
               </select></label>
               ${w.id === 'cash' ? '' : `<label>還元率の初期値(%。0=対象外)<input type="number" data-wallet-point="${esc(w.id)}" inputmode="decimal" min="0" max="100" step="0.1" value="${Number(w.pointRate) || 0}"></label>
@@ -1641,7 +1660,7 @@
           )
           .join('')}
         <div class="btn-row" style="margin-top:10px"><button type="button" class="btn" id="add-wallet">+ 追加</button></div>
-        <p class="small muted">チャージは、入力画面でこれを選ぶと出る「チャージを記録」から。チャージ元がメイン口座なら、チャージはお金の移動で、お店で使ったときに支出になります。チャージ元がカードなら、チャージした時点でそのカードの支出になり、お店で使ったときは残高が減るだけです。残高がずれたら「今の残高」を実際の額に直してください。</p>
+        <p class="small muted">チャージは、入力画面でこれを選ぶと出る「チャージを記録」から。チャージ元がメイン口座なら、チャージはお金の移動で、お店で使ったときに支出になります。チャージ元がカードなら、チャージした時点でそのカードの支出になり、お店で使ったときは残高が減るだけです。チャージ元が財布の現金(PASMO など)なら、チャージは財布の現金での支払いとして記録し、お店や電車で使ったときは残高が減るだけです。残高がずれたら「今の残高」を実際の額に直してください。</p>
       </div>
 
       <div class="card">
