@@ -1452,19 +1452,36 @@
       })
       .join('');
 
+    // 支払方法ごとの、この月の支出(金額・件数)
     const byMethod = {};
     exp.forEach((t) => {
       const key = findCard(t.method) || findWallet(t.method) || t.method === 'bank' ? t.method : 'cash';
-      byMethod[key] = (byMethod[key] || 0) + Number(t.amount);
+      const x = byMethod[key] || (byMethod[key] = { amount: 0, count: 0 });
+      x.amount += Number(t.amount);
+      x.count += 1;
     });
-    const methodRows = ['cash', 'bank']
-      .concat((state.wallets || []).map((w) => w.id).filter((id) => id !== 'cash'))
-      .concat(state.cards.map((c) => c.id))
-      .filter((id) => byMethod[id])
-      .map((id) => `<li><div class="grow">${esc(methodName(id))}</div><div>${en(byMethod[id])}</div></li>`)
-      .join('');
-
     const s = L.monthSummary(state, reportMonth, L.today());
+    const cardIds = state.cards.map((c) => c.id);
+    const otherIds = ['cash', 'bank'].concat((state.wallets || []).map((w) => w.id).filter((id) => id !== 'cash')).filter((id) => byMethod[id]);
+    // カードは、この月に使ったか引き落とされたものを出す
+    const shownCards = cardIds.filter((id) => byMethod[id] || s.withdrawals.some((w) => w.cardId === id));
+    const methodRows = shownCards
+      .map((id) => {
+        const used = byMethod[id] || { amount: 0, count: 0 };
+        const wds = s.withdrawals.filter((w) => w.cardId === id);
+        const sub = [used.count ? used.count + '件' : 'この月の利用なし'].concat(wds.map((w) => `${mdw(w.date)} 引落 ${en(w.amount)}`));
+        return `<li><div class="grow">${esc(methodName(id))}<div class="small muted">${esc(sub.join(' / '))}</div></div><div>${en(used.amount)}</div></li>`;
+      })
+      .concat(otherIds.map((id) => `<li><div class="grow">${esc(methodName(id))}<div class="small muted">${byMethod[id].count}件</div></div><div>${en(byMethod[id].amount)}</div></li>`))
+      .join('');
+    // 使えるお金の内訳の「支出」の下:カードはカードごと(使った月 / 引き落とされた月)、ほかは支払方法ごと
+    const spentRows = (s.basis === 'cash'
+      ? s.withdrawals.map((w) => [`${w.name} 引落 ${mdw(w.date)}`, w.amount])
+      : cardIds.filter((id) => byMethod[id]).map((id) => [methodName(id), byMethod[id].amount])
+    )
+      .concat(otherIds.map((id) => [methodName(id), byMethod[id].amount]))
+      .map(([name, amt]) => `<div class="sub">${esc(name)}</div><div class="sub">${en(amt)}</div>`)
+      .join('');
 
     $('#view-report').innerHTML = `
       <div class="month-row">
@@ -1477,6 +1494,11 @@
         <div><div class="label">支出</div><div class="val expense">${num(total)}<small>円</small></div></div>
         <div><div class="label">あと使える</div><div class="val">${num(s.remaining)}<small>円</small></div></div>
       </div>
+      <div class="card"><h3>支払方法別の支出</h3><ul class="list">${methodRows || '<li class="small muted">記録がありません</li>'}</ul>
+        ${activeWallets()
+          .filter((w) => w.id !== 'cash' || cashTracked())
+          .map((w) => `<p class="small muted" style="margin:8px 0 0">${w.id === 'cash' ? '財布' : esc(w.name)}の今の残高:${en(L.walletBalance(state, w))}</p>`)
+          .join('')}</div>
       <div class="card">
         <h3>使えるお金の内訳(${s.basis === 'cash' ? 'カードは引落月で計上' : 'カードは使った月で計上'})</h3>
         <div class="rows">
@@ -1485,10 +1507,7 @@
           ${s.recurring.map((r) => `<div class="sub">${esc(r.name)} ${mdw(r.date)}</div><div class="sub">${en(r.amount)}</div>`).join('')}
           ${s.savings ? `<div>残しておく額</div><div>-${en(s.savings)}</div>` : ''}
           <div>支出</div><div class="expense">-${en(s.spent)}</div>
-          <div class="sub">現金</div><div class="sub">${en(s.cashSpent)}</div>
-          ${s.basis === 'cash'
-            ? `<div class="sub">カード引落</div><div class="sub">${en(s.cardWithdrawn)}</div>`
-            : `<div class="sub">カード利用</div><div class="sub">${en(s.cardUsed)}</div>`}
+          ${spentRows}
           <div class="total">あと使えるお金</div><div class="total">${en(s.remaining)}</div>
         </div>
       </div>
@@ -1502,11 +1521,6 @@
         </div>
         <p class="small muted" style="margin:8px 0 0">収入の「貯蓄」で記録した分です。使えるお金には入りません。</p>
       </div>
-      <div class="card"><h3>支払方法別</h3><ul class="list">${methodRows || '<li class="small muted">記録がありません</li>'}</ul>
-        ${activeWallets()
-          .filter((w) => w.id !== 'cash' || cashTracked())
-          .map((w) => `<p class="small muted" style="margin:8px 0 0">${w.id === 'cash' ? '財布' : esc(w.name)}の今の残高:${en(L.walletBalance(state, w))}</p>`)
-          .join('')}</div>
       <div class="card"><h3>この月の引落・入金予定</h3><ul class="list">${scheduleItems(s, L.today()) || '<li class="small muted">ありません</li>'}</ul></div>
       ${bankReport()}`;
   }
