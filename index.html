@@ -58,6 +58,19 @@
         <div class="row-label">支払</div>
         <div class="methods" id="methods"></div>
       </div>
+      <div class="installment-row" id="installment-row" hidden>
+        <label for="installments">支払回数</label>
+        <select id="installments" class="pill installment-select">
+          <option value="1">1回払い</option>
+          <option value="2">2回</option>
+          <option value="3">3回</option>
+          <option value="6">6回</option>
+          <option value="10">10回</option>
+          <option value="12">12回</option>
+          <option value="24">24回</option>
+        </select>
+        <span class="small muted" id="installment-note"></span>
+      </div>
       <div class="wallet-info" id="wallet-info" hidden></div>
       <div class="point-row" id="point-row" hidden>
         <button type="button" class="point-toggle" id="point-toggle" aria-pressed="false"></button>
