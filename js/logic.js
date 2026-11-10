@@ -537,7 +537,9 @@
       if (tx.type !== 'expense' || !isCard(state, tx.method)) return;
       const card = findCard(state, tx.method);
       const wd = withdrawalDateFor(card, tx.date);
-      if (wd < bank.asOf) return;
+      // 残高を入れた日の引落は、まだ落ちていないものとして引く(少なめに見積もる)。
+      // 引き落とされた後の残高だと答えていれば(afterWithdrawals)、その日の分は引かない
+      if (wd < bank.asOf || (wd === bank.asOf && bank.afterWithdrawals)) return;
       const key = card.id + '|' + wd;
       if (!map[key]) map[key] = { date: wd, name: card.name, amount: 0 };
       map[key].amount += Number(tx.amount);

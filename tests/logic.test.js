@@ -205,6 +205,10 @@ test('メイン口座の見通し', () => {
   // 残高を入れた日と同じ日の引落は、まだ落ちていないものとして引く
   s.settings.bank.asOf = '2026-11-10';
   assert.equal(L.bankOutlook(s, '2026-11-10').pendingWithdrawals, 30000);
+  // 引き落とされた後の残高だと答えていれば、その日の分は引かない
+  s.settings.bank.afterWithdrawals = true;
+  assert.equal(L.bankOutlook(s, '2026-11-10').pendingWithdrawals, 0);
+  delete s.settings.bank.afterWithdrawals;
   s.settings.bank.asOf = '2026-11-11';
   assert.equal(L.bankOutlook(s, '2026-11-11').pendingWithdrawals, 0);
   // 給料日を過ぎると次の月の分を引く。残高が給料日より前なら古いことを知らせる
