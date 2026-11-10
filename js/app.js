@@ -581,7 +581,17 @@
     const cur = (state.settings.bank || {}).balance;
     const n = await ask('メイン口座の今の残高(銀行アプリで見た額)', { withInput: true, value: cur || '', okLabel: '更新する', maxDigits: 9 });
     if (n === null) return;
-    state.settings.bank = { balance: n, asOf: L.today(), updatedAt: new Date().toISOString() };
+    const bank = { balance: n, asOf: L.today(), updatedAt: new Date().toISOString() };
+    // 今日がカードの引落日なら、入れた残高が引き落とされた後かを聞く(後なら今日の分は引かない)
+    const o = L.bankOutlook({ ...state, settings: { ...state.settings, bank } });
+    const todays = o ? o.withdrawals.concat(o.laterWithdrawals).filter((w) => w.date === bank.asOf) : [];
+    if (todays.length) {
+      bank.afterWithdrawals = await ask(
+        `今日(${mdw(bank.asOf)})は ${todays.map((w) => w.name + ' ' + en(w.amount)).join('・')} の引落日です。\n入れた残高は、もう引き落とされた後の額ですか？`,
+        { okLabel: '引き落とし後', cancelLabel: 'まだ前', mustChoose: true }
+      );
+    }
+    state.settings.bank = bank;
     save();
     render();
     toast('口座の残高を更新しました');
@@ -1560,7 +1570,7 @@
       <div class="rows" style="margin-top:6px"><div class="total">出せるお金(${mdw(b.payday)}の給料日まで)</div><div class="total">${en(b.available)}</div></div>
       ${b.laterWithdrawals.length ? `<div class="small muted" style="margin:10px 0 4px">給料日より後の引落(その給料で払う前提で、上では引いていません)</div>
       <ul class="list">${b.laterWithdrawals.map((w) => `<li><div class="small" style="width:66px">${mdw(w.date)}</div><div class="grow">${esc(w.name)} 引落</div><div class="muted">${en(w.amount)}</div></li>`).join('')}</ul>` : ''}
-      <p class="small muted" style="margin:8px 0 0">引落予定は、カード払いで記録した分から計算しています。残高を入れた日の引落は、まだ落ちていないものとして引いています。給料日はメニューで変えられます。</p>
+      <p class="small muted" style="margin:8px 0 0">引落予定は、カード払いで記録した分から計算しています。残高を入れた日が引落日のときは、「まだ前」と答えた場合だけその日の分を引いています。給料日はメニューで変えられます。</p>
     </div>`;
   }
 
