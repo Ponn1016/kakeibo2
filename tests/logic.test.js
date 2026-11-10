@@ -447,3 +447,40 @@ test('財布の現金からチャージする電子マネー(PASMO):チャージ
   assert.equal(L.monthSummary(u, '2026-11', '2026-11-03').spent, 3000);
   assert.equal(L.walletBalance(u, u.wallets[1]), 2822);
 });
+
+test('分割払い(Paidy の3回あと払いなど):毎月の支払い分を引落日の月に数える', () => {
+  const paidy = { id: 'p', name: 'Paidy', closingDay: 31, paymentMonthOffset: 1, paymentDay: 12, holidayAdjust: 'next' };
+  const s = {
+    settings: { savingsGoal: 0 },
+    cards: [cardA, paidy],
+    incomes: [],
+    transactions: [
+      { id: 1, type: 'income', date: '2026-11-01', amount: 100000, category: 'salary', method: 'cash' },
+      { id: 2, type: 'expense', date: '2026-11-05', amount: 30001, category: 'daily', method: 'p', installments: 3 },
+      { id: 3, type: 'expense', date: '2026-11-06', amount: 2000, category: 'food', method: 'p' } // 1回払い
+    ]
+  };
+  // 12/12 は土曜 → 12/14、1/12、2/12。端数は1回目
+  assert.deepEqual(L.cardPayments(s, s.transactions[1]).map((p) => [p.date, p.amount, p.no, p.of]), [
+    ['2026-12-14', 10001, 1, 3],
+    ['2027-01-12', 10000, 2, 3],
+    ['2027-02-12', 10000, 3, 3]
+  ]);
+  assert.equal(L.isInstallment(s, s.transactions[1]), true);
+  assert.equal(L.isInstallment(s, s.transactions[2]), false);
+  // 買った11月は1回払いの分だけ、12月以降に毎月の支払い分
+  assert.equal(L.monthSummary(s, '2026-11', '2026-11-30').spent, 2000);
+  assert.equal(L.monthSummary(s, '2026-12', '2026-12-31').spent, 10001);
+  assert.equal(L.monthSummary(s, '2027-01', '2027-01-31').spent, 10000);
+  assert.equal(L.monthSummary(s, '2027-03', '2027-03-31').carry, 100000 - 2000 - 30001);
+  assert.deepEqual(L.spendingItems(s, '2027-02').map((t) => [t.id, t.amount, t.installment.no]), [[2, 10000, 3]]);
+  // 引落は月ごとに分ける
+  assert.deepEqual(L.cardWithdrawalsInMonth(s, '2026-12').map((w) => [w.date, w.amount]), [['2026-12-14', 12001]]);
+  assert.deepEqual(L.cardWithdrawalsInMonth(s, '2027-01').map((w) => [w.date, w.amount]), [['2027-01-12', 10000]]);
+  // 口座の見通しも、毎月の支払い分ずつ
+  s.settings.bank = { balance: 50000, asOf: '2026-11-10', updatedAt: '2026-11-10T00:00:00.000Z' };
+  s.settings.payday = { day: 25, holidayAdjust: 'prev' };
+  const b = L.bankOutlook(s, '2026-12-01');
+  assert.deepEqual(b.withdrawals.map((w) => [w.date, w.amount]), [['2026-12-14', 12001]]);
+  assert.deepEqual(b.laterWithdrawals.map((w) => [w.date, w.amount]), [['2027-01-12', 10000], ['2027-02-12', 10000]]);
+});

@@ -249,18 +249,58 @@
     return card ? withdrawalDateFor(card, tx.date) : tx.date;
   }
 
+  /*
+   * カード払いの引落の一覧。tx.installments が 2 以上なら分割払い(Paidy の3回あと払いなど):
+   * 締めを1か月ずつずらした引落日に、回数で割った額を払う(端数は1回目に足す)
+   */
+  function cardPayments(state, tx) {
+    const card = findCard(state, tx.method);
+    const amount = Number(tx.amount);
+    const n = Math.max(1, Math.floor(Number(tx.installments) || 1));
+    if (n === 1) return [{ date: withdrawalDateFor(card, tx.date), amount, no: 1, of: 1 }];
+    const base = Math.floor(amount / n);
+    const close = parse(closingDateFor(card, tx.date));
+    return Array.from({ length: n }, (_, k) => {
+      const d = new Date(close.y, close.m - 1 + k, 1);
+      const closeK = dayOfMonth(d.getFullYear(), d.getMonth() + 1, Number(card.closingDay));
+      return { date: withdrawalDateFor(card, closeK), amount: k === 0 ? amount - base * (n - 1) : base, no: k + 1, of: n };
+    });
+  }
+
+  function isInstallment(state, tx) {
+    return tx.type === 'expense' && isCard(state, tx.method) && Number(tx.installments) > 1;
+  }
+
+  /*
+   * 月(mk)の支出として数える記録。分割払いは、買った日ではなく毎月の支払い分を引落日の月に数える
+   * (まとまったお金が一度に出ていかないように分割しているので)。amount はその月に数える額
+   */
+  function spendingItems(state, mk) {
+    const items = [];
+    (state.transactions || []).forEach((t) => {
+      if (t.type !== 'expense' || isPrepaidUse(state, t)) return;
+      if (isInstallment(state, t)) {
+        cardPayments(state, t)
+          .filter((p) => monthKey(p.date) === mk)
+          .forEach((p) => items.push({ ...t, amount: p.amount, installment: p }));
+      } else if (monthKey(t.date) === mk) items.push(t);
+    });
+    return items;
+  }
+
   // 指定月に引き落とされるカード利用額(カードごと)
   function cardWithdrawalsInMonth(state, mk) {
     const map = {};
     (state.transactions || []).forEach((tx) => {
       if (tx.type !== 'expense' || !isCard(state, tx.method)) return;
       const card = findCard(state, tx.method);
-      const wd = withdrawalDateFor(card, tx.date);
-      if (monthKey(wd) !== mk) return;
-      const key = card.id + '|' + wd;
-      if (!map[key]) map[key] = { cardId: card.id, name: card.name, date: wd, amount: 0, count: 0 };
-      map[key].amount += Number(tx.amount);
-      map[key].count += 1;
+      cardPayments(state, tx).forEach((p) => {
+        if (monthKey(p.date) !== mk) return;
+        const key = card.id + '|' + p.date;
+        if (!map[key]) map[key] = { cardId: card.id, name: card.name, date: p.date, amount: 0, count: 0 };
+        map[key].amount += p.amount;
+        map[key].count += 1;
+      });
     });
     return Object.values(map).sort((a, b) => a.date.localeCompare(b.date));
   }
@@ -284,7 +324,7 @@
     const recurringTotal = recurring.reduce((s, r) => s + r.amount, 0);
     const extraIncome = txs.filter((t) => t.type === 'income' && !isSavings(t)).reduce((s, t) => s + Number(t.amount), 0);
 
-    const expensesInMonth = txs.filter((t) => t.type === 'expense' && !isPrepaidUse(state, t));
+    const expensesInMonth = spendingItems(state, mk);
     const cashSpent = expensesInMonth.filter((t) => !isCard(state, t.method)).reduce((s, t) => s + Number(t.amount), 0);
     const cardUsed = expensesInMonth.filter((t) => isCard(state, t.method)).reduce((s, t) => s + Number(t.amount), 0);
     const withdrawals = cardWithdrawalsInMonth(state, mk);
@@ -536,13 +576,14 @@
     (state.transactions || []).forEach((tx) => {
       if (tx.type !== 'expense' || !isCard(state, tx.method)) return;
       const card = findCard(state, tx.method);
-      const wd = withdrawalDateFor(card, tx.date);
-      // 残高を入れた日の引落は、まだ落ちていないものとして引く(少なめに見積もる)。
-      // 引き落とされた後の残高だと答えていれば(afterWithdrawals)、その日の分は引かない
-      if (wd < bank.asOf || (wd === bank.asOf && bank.afterWithdrawals)) return;
-      const key = card.id + '|' + wd;
-      if (!map[key]) map[key] = { date: wd, name: card.name, amount: 0 };
-      map[key].amount += Number(tx.amount);
+      cardPayments(state, tx).forEach(({ date: wd, amount }) => {
+        // 残高を入れた日の引落は、まだ落ちていないものとして引く(少なめに見積もる)。
+        // 引き落とされた後の残高だと答えていれば(afterWithdrawals)、その日の分は引かない
+        if (wd < bank.asOf || (wd === bank.asOf && bank.afterWithdrawals)) return;
+        const key = card.id + '|' + wd;
+        if (!map[key]) map[key] = { date: wd, name: card.name, amount: 0 };
+        map[key].amount += amount;
+      });
     });
     const all = Object.values(map).sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
     const before = all.filter((w) => w.date < payday);
@@ -816,6 +857,9 @@
     adjustBusinessDay,
     closingDateFor,
     withdrawalDateFor,
+    cardPayments,
+    isInstallment,
+    spendingItems,
     recurringIncomeDate,
     recurringIncomesInMonth,
     nextIncomeDate,

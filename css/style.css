@@ -287,6 +287,9 @@ main { max-width: 600px; margin: 0 auto; padding: 0 16px 16px; }
 .point-rate[hidden] { display: none; }
 .point-rate .point-unit { font-size: 12px; color: var(--muted); }
 .nl-row { flex-wrap: wrap; }
+.installment-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 0 2px; font-size: 14px; }
+.installment-row[hidden] { display: none; }
+.installment-select { border: 1px solid var(--line); padding: 6px 8px; font-size: 16px; }
 .nl-row .point-toggle:disabled { opacity: .6; }
 .coupon-select { border: 1px solid var(--line); padding: 6px 8px; font-size: 16px; max-width: 100%; }
 .coupon-select[hidden] { display: none; }

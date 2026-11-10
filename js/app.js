@@ -641,7 +641,7 @@
   // work: 時給ごとの入力中の時間と分 { "1830": { h: "7", m: "30" }, ... }
   // point: この支出をポイント還元(7%還元など)の対象にするか
   // pointRate: この支出の還元率(%)。オンにしたときはメニューの初期値が入る
-  const form = { editingId: null, type: 'expense', date: L.today(), amount: '', category: null, method: 'cash', memo: '', work: {}, incomeMode: 'hourly', point: false, pointRate: '', pointUnit: 0, nl7: false, coupon: '' };
+  const form = { editingId: null, type: 'expense', date: L.today(), amount: '', category: null, method: 'cash', memo: '', work: {}, incomeMode: 'hourly', point: false, pointRate: '', pointUnit: 0, nl7: false, coupon: '', installments: 1 };
   let methodTouched = false;
   let returnView = 'home'; // 編集を終えたときに戻る画面
 
@@ -659,6 +659,7 @@
     form.pointUnit = 0;
     form.nl7 = false;
     form.coupon = '';
+    form.installments = 1;
     methodTouched = false;
   }
 
@@ -685,7 +686,8 @@
       pointRate: Number(tx.pointRate) > 0 ? String(tx.pointRate) : '',
       pointUnit: Number(tx.pointUnit) || 0,
       nl7: !!tx.nl7,
-      coupon: tx.coupon || ''
+      coupon: tx.coupon || '',
+      installments: Number(tx.installments) > 1 ? Number(tx.installments) : 1
     });
     methodTouched = true;
     show('input');
@@ -708,7 +710,7 @@
     $('#method-row').hidden = !isExpense;
     $('#suggest-hint').hidden = !isExpense;
     if (isExpense) renderMethods();
-    else $('#wallet-info').hidden = $('#point-row').hidden = $('#nl-row').hidden = true;
+    else $('#wallet-info').hidden = $('#point-row').hidden = $('#nl-row').hidden = $('#installment-row').hidden = true;
 
     const hourly = isHourly();
     $('#income-mode-row').hidden = !isSalary();
@@ -861,7 +863,26 @@
     renderWalletInfo();
     renderPointToggle();
     renderSmbcRow();
+    renderInstallments();
   }
+
+  // カード払いの支払回数(Paidy の3回あと払いなど)。2回以上なら毎月の支払い分を引落日の月に数える
+  function renderInstallments() {
+    const row = $('#installment-row');
+    const card = form.type === 'expense' ? findCard(form.method) : null;
+    row.hidden = !card;
+    if (!card) return;
+    $('#installments').value = String(form.installments);
+    const pays = form.installments > 1 ? L.cardPayments(state, { type: 'expense', date: form.date, amount: Number(form.amount) || 0, method: card.id, installments: form.installments }) : [];
+    $('#installment-note').textContent = pays.length
+      ? `毎月 ${en(pays[pays.length - 1].amount)}(${mdw(pays[0].date)}〜${mdw(pays[pays.length - 1].date)})を、引落の月の支出に数えます`
+      : '';
+  }
+
+  $('#installments').addEventListener('change', (e) => {
+    form.installments = Number(e.target.value) || 1;
+    renderInstallments();
+  });
 
   // 支払方法ごとの還元率の初期値(%)と、何円ごとにポイントが付くか(0 なら 1円単位)。メニューで設定する
   function pointRate(method) {
@@ -1170,6 +1191,7 @@
       data.pointRate = Number(form.pointRate);
       if (form.pointUnit > 0) data.pointUnit = form.pointUnit;
     }
+    if (data.type === 'expense' && findCard(data.method) && form.installments > 1) data.installments = form.installments;
     if (data.type === 'expense' && L.isSmbcCard(state, data.method)) {
       if (form.coupon) data.coupon = form.coupon;
       if (form.nl7 && L.smbcTxInfo(state, { ...data, nl7: true }).tagged) data.nl7 = true;
@@ -1181,6 +1203,7 @@
       delete tx.pointUnit;
       delete tx.nl7;
       delete tx.coupon;
+      delete tx.installments;
       Object.assign(tx, data);
       save();
       toast('変更しました');
@@ -1192,7 +1215,8 @@
     save();
     const card = data.type === 'expense' ? findCard(data.method) : null;
     const pts = L.isSmbcCard(state, data.method) ? L.smbcTxPoints(state, data) : L.txPoints(data);
-    toast(card ? `記録しました(${mdw(L.withdrawalDateFor(card, data.date))} 引落${pts ? ' / +' + num(pts) + 'P' : ''})` : '記録しました');
+    const firstPay = card ? L.cardPayments(state, data)[0] : null;
+    toast(card ? `記録しました(${mdw(firstPay.date)} 引落${data.installments ? ' から' + data.installments + '回' : ''}${pts ? ' / +' + num(pts) + 'P' : ''})` : '記録しました');
     // 日付とカテゴリーはそのまま、続けて入力できるようにする
     form.amount = '';
     form.memo = '';
@@ -1202,6 +1226,7 @@
     form.pointUnit = 0;
     form.nl7 = false;
     form.coupon = '';
+    form.installments = 1;
     methodTouched = false;
     $('#amount').blur();
     renderInput();
@@ -1332,7 +1357,10 @@
     const sub = [];
     if (withDate) sub.push(longDate(tx.date));
     const card = tx.type === 'expense' ? findCard(tx.method) : null;
-    if (card) sub.push(card.name + '・' + mdw(L.withdrawalDateFor(card, tx.date)) + '引落');
+    if (card && L.isInstallment(state, tx)) {
+      const pays = L.cardPayments(state, tx);
+      sub.push(`${card.name}・${pays.length}回払い 毎月${en(pays[pays.length - 1].amount)}(${mdw(pays[0].date)}〜${mdw(pays[pays.length - 1].date)})`);
+    } else if (card) sub.push(card.name + '・' + mdw(L.withdrawalDateFor(card, tx.date)) + '引落');
     else if (tx.type === 'expense') sub.push(methodName(tx.method));
     if (tx.hours && tx.hours.length) sub.push(hoursText(tx.hours));
     if (L.isSavings(tx)) sub.push('使えるお金には含めません');
@@ -1436,7 +1464,8 @@
   function renderReport() {
     const [y, m] = reportMonth.split('-').map(Number);
     const txs = state.transactions.filter((t) => L.monthKey(t.date) === reportMonth);
-    const exp = txs.filter((t) => t.type === 'expense' && !L.isPrepaidUse(state, t));
+    // 分割払いは毎月の支払い分をその月に数える(L.spendingItems)
+    const exp = L.spendingItems(state, reportMonth);
     const total = exp.reduce((a, t) => a + Number(t.amount), 0);
 
     const byCat = {};
