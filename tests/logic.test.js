@@ -484,3 +484,38 @@ test('分割払い(Paidy の3回あと払いなど):毎月の支払い分を引�
   assert.deepEqual(b.withdrawals.map((w) => [w.date, w.amount]), [['2026-12-14', 12001]]);
   assert.deepEqual(b.laterWithdrawals.map((w) => [w.date, w.amount]), [['2027-01-12', 10000], ['2027-02-12', 10000]]);
 });
+
+test('請求額の確定:引落額をメールなどの額にし、記録との差額を引落の月の支出に足す', () => {
+  const s = {
+    settings: { savingsGoal: 0 },
+    cards: [cardA, cardB],
+    incomes: [],
+    transactions: [
+      { id: 1, type: 'income', date: '2026-10-01', amount: 100000, category: 'salary', method: 'cash' },
+      { id: 2, type: 'expense', date: '2026-10-10', amount: 20000, category: 'food', method: 'b' }, // カードB:末日締め → 11/27 引落
+      { id: 3, type: 'expense', date: '2026-10-20', amount: 5000, category: 'food', method: 'b' }
+    ]
+  };
+  assert.deepEqual(L.cardWithdrawalsInMonth(s, '2026-11').map((w) => [w.key, w.amount, !!w.confirmed]), [['b|2026-11-27', 25000, false]]);
+  assert.equal(L.monthSummary(s, '2026-11', '2026-11-30').spent, 0);
+  // 請求額は 25,480円(記録漏れなどで +480円)
+  s.withdrawalOverrides = { 'b|2026-11-27': 25480 };
+  const w = L.cardWithdrawalsInMonth(s, '2026-11')[0];
+  assert.deepEqual([w.amount, w.computed, w.confirmed], [25480, 25000, true]);
+  // 使った月で数える:10月はそのまま、差額 480円 を11月の支出に
+  assert.equal(L.monthSummary(s, '2026-10', '2026-10-31').spent, 25000);
+  assert.equal(L.monthSummary(s, '2026-11', '2026-11-30').spent, 480);
+  assert.deepEqual(L.spendingItems(s, '2026-11').map((t) => [t.method, t.amount, t.adjustment]), [['b', 480, true]]);
+  assert.equal(L.monthSummary(s, '2026-12', '2026-12-31').carry, 100000 - 25480);
+  // 少なかったときは減らす
+  s.withdrawalOverrides = { 'b|2026-11-27': 24800 };
+  assert.equal(L.monthSummary(s, '2026-11', '2026-11-30').spent, -200);
+  // 引落月で数える:確定した額をそのまま
+  s.settings.basis = 'cash';
+  assert.equal(L.monthSummary(s, '2026-11', '2026-11-30').spent, 24800);
+  delete s.settings.basis;
+  // 口座の見通しも確定した額
+  s.settings.bank = { balance: 50000, asOf: '2026-11-12', updatedAt: '2026-11-12T00:00:00.000Z' };
+  s.settings.payday = { day: 25, holidayAdjust: 'prev' };
+  assert.deepEqual(L.bankOutlook(s, '2026-11-12').laterWithdrawals.map((x) => [x.date, x.amount]), [['2026-11-27', 24800]]);
+});

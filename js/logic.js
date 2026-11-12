@@ -273,7 +273,8 @@
 
   /*
    * 月(mk)の支出として数える記録。分割払いは、買った日ではなく毎月の支払い分を引落日の月に数える
-   * (まとまったお金が一度に出ていかないように分割しているので)。amount はその月に数える額
+   * (まとまったお金が一度に出ていかないように分割しているので)。amount はその月に数える額。
+   * 請求額を確定して記録との差があれば、その差額も引落の月に足す(withdrawalAdjustments)
    */
   function spendingItems(state, mk) {
     const items = [];
@@ -285,25 +286,54 @@
           .forEach((p) => items.push({ ...t, amount: p.amount, installment: p }));
       } else if (monthKey(t.date) === mk) items.push(t);
     });
-    return items;
+    return items.concat(withdrawalAdjustments(state, mk));
   }
 
   // 指定月に引き落とされるカード利用額(カードごと)
-  function cardWithdrawalsInMonth(state, mk) {
+  /*
+   * カードの引落を「カード|引落日」ごとにまとめる(記録から計算した額)。keep(引落日) が true のものだけ
+   */
+  function rawWithdrawals(state, keep) {
     const map = {};
     (state.transactions || []).forEach((tx) => {
       if (tx.type !== 'expense' || !isCard(state, tx.method)) return;
       const card = findCard(state, tx.method);
       cardPayments(state, tx).forEach((p) => {
-        if (monthKey(p.date) !== mk) return;
+        if (!keep(p.date)) return;
         const key = card.id + '|' + p.date;
-        if (!map[key]) map[key] = { cardId: card.id, name: card.name, date: p.date, amount: 0, count: 0 };
+        if (!map[key]) map[key] = { key, cardId: card.id, name: card.name, date: p.date, amount: 0, count: 0 };
         map[key].amount += p.amount;
         map[key].count += 1;
       });
     });
-    return Object.values(map).sort((a, b) => a.date.localeCompare(b.date));
+    return map;
   }
+
+  /*
+   * 請求額の確定(state.withdrawalOverrides = { "カード|引落日": 額 })。カード会社のメールなどで額が分かったら、
+   * 記録から計算した額(computed)の代わりにその額を引落額にする
+   */
+  function applyWithdrawalOverrides(state, map) {
+    const ov = state.withdrawalOverrides || {};
+    return Object.values(map)
+      .map((w) => (ov[w.key] !== undefined ? { ...w, computed: w.amount, amount: Number(ov[w.key]), confirmed: true } : w))
+      .sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
+  }
+
+  // 指定月に引き落とされるカード利用額(カードごと)。請求額を確定していればその額
+  function cardWithdrawalsInMonth(state, mk) {
+    return applyWithdrawalOverrides(state, rawWithdrawals(state, (d) => monthKey(d) === mk));
+  }
+
+  /*
+   * 確定した請求額と記録の差額。使った月で数えるときは、引落の月の支出に足す(記録漏れ・手数料など。マイナスなら減らす)
+   */
+  function withdrawalAdjustments(state, mk) {
+    return cardWithdrawalsInMonth(state, mk)
+      .filter((w) => w.confirmed && w.amount !== w.computed)
+      .map((w) => ({ id: 'adj:' + w.key, type: 'expense', date: w.date, method: w.cardId, category: 'other', memo: '請求額との差額', amount: w.amount - w.computed, adjustment: true }));
+  }
+
 
   function nextMonthKey(mk) {
     const [y, m] = mk.split('-').map(Number);
@@ -572,20 +602,9 @@
     const now = todayDate || today();
     const { prev, next: payday } = paydaysAround(state, now);
 
-    const map = {};
-    (state.transactions || []).forEach((tx) => {
-      if (tx.type !== 'expense' || !isCard(state, tx.method)) return;
-      const card = findCard(state, tx.method);
-      cardPayments(state, tx).forEach(({ date: wd, amount }) => {
-        // 残高を入れた日の引落は、まだ落ちていないものとして引く(少なめに見積もる)。
-        // 引き落とされた後の残高だと答えていれば(afterWithdrawals)、その日の分は引かない
-        if (wd < bank.asOf || (wd === bank.asOf && bank.afterWithdrawals)) return;
-        const key = card.id + '|' + wd;
-        if (!map[key]) map[key] = { date: wd, name: card.name, amount: 0 };
-        map[key].amount += amount;
-      });
-    });
-    const all = Object.values(map).sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
+    // 残高を入れた日の引落は、まだ落ちていないものとして引く(少なめに見積もる)。
+    // 引き落とされた後の残高だと答えていれば(afterWithdrawals)、その日の分は引かない。請求額を確定していればその額
+    const all = applyWithdrawalOverrides(state, rawWithdrawals(state, (wd) => !(wd < bank.asOf || (wd === bank.asOf && bank.afterWithdrawals))));
     const before = all.filter((w) => w.date < payday);
     const later = all.filter((w) => w.date >= payday);
     const pendingWithdrawals = before.reduce((s, w) => s + w.amount, 0);
@@ -865,6 +884,7 @@
     nextIncomeDate,
     cashOutDate,
     cardWithdrawalsInMonth,
+    withdrawalAdjustments,
     monthSummary,
     carryOver,
     savingsBalance,

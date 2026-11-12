@@ -65,6 +65,7 @@
       // 毎月決まった額の収入。金額 0 のあいだは使わない
       incomes: [{ id: 'fixed-income', name: '固定収入', amount: 0, day: 25, holidayAdjust: 'prev' }],
       incomeOverrides: {},
+      withdrawalOverrides: {}, // カードの請求額の確定 { "カード|引落日": 額 }
       categories: defaultCategories(),
       transactions: []
     };
@@ -612,14 +613,48 @@
     show('input');
   });
 
+  // カードの引落:タップで請求額を確定できるようにする
+  function wdAttrs(w) {
+    return `data-wd="${esc(w.key)}" data-amount="${w.amount}" data-computed="${w.confirmed ? w.computed : w.amount}" data-name="${esc(w.name)}" data-date="${esc(w.date)}"`;
+  }
+
+  function wdNote(w) {
+    if (!w.confirmed) return '利用時に記録済み・合計には含みません。タップで請求額を確定';
+    const diff = w.amount - w.computed;
+    return `請求額で確定(記録 ${en(w.computed)}${diff ? '、差額 ' + (diff > 0 ? '+' : '-') + en(Math.abs(diff)) + ' を支出に反映' : ''})`;
+  }
+
+  async function confirmWithdrawal(el) {
+    const computed = Number(el.dataset.computed);
+    const n = await ask(`${el.dataset.name} ${mdw(el.dataset.date)} の請求額(カード会社のメールなどで届いた額)\n記録から計算した額:${en(computed)}\n記録と違う分は、引落の月の支出として反映します。`, {
+      withInput: true,
+      value: el.dataset.amount,
+      okLabel: '確定する',
+      maxDigits: 7
+    });
+    if (n === null) return false;
+    state.withdrawalOverrides = state.withdrawalOverrides || {};
+    if (n === computed) {
+      delete state.withdrawalOverrides[el.dataset.wd];
+      toast('記録どおりの額にしました');
+    } else {
+      state.withdrawalOverrides[el.dataset.wd] = n;
+      toast(`請求額を ${en(n)} で確定しました`);
+    }
+    save();
+    return true;
+  }
+
   function scheduleItems(s, t) {
     const items = [];
-    s.withdrawals.forEach((w) => items.push({ date: w.date, label: esc(w.name) + ' 引落', amount: `<span class="expense">-${en(w.amount)}</span>` }));
+    s.withdrawals.forEach((w) =>
+      items.push({ date: w.date, attrs: wdAttrs(w), label: esc(w.name) + ' 引落' + (w.confirmed ? ' <span class="tag good">確定</span>' : ''), amount: `<span class="expense">-${en(w.amount)}</span>` })
+    );
     s.recurring.forEach((r) => items.push({ date: r.date, label: esc(r.name), amount: `<span class="income">${en(r.amount)}</span>` }));
     return items
       .sort((a, b) => a.date.localeCompare(b.date))
       .map(
-        (i) => `<li class="${i.date < t ? 'muted' : ''}"><div class="small" style="width:66px">${mdw(i.date)}</div>
+        (i) => `<li class="${i.date < t ? 'muted' : ''} ${i.attrs ? 'tap' : ''}" ${i.attrs || ''}><div class="small" style="width:66px">${mdw(i.date)}</div>
           <div class="grow">${i.label}${i.date < t ? ' <span class="tag">済</span>' : ''}</div><div>${i.amount}</div></li>`
       )
       .join('');
@@ -1329,9 +1364,9 @@
           <div class="amount income">${en(r.amount)}</div><span class="go">${I.ui('chevR', 20, 1.6)}</span></li>`);
       });
       info.withdrawals.forEach((w) => {
-        items.push(`<li><div class="ic-wrap">${I.category('card', '#a59f93', 34)}</div>
-          <div class="grow"><div class="name">${esc(w.name)} 引落<small>(${w.count}件)</small></div><div class="sub">利用時に記録済み・合計には含みません</div></div>
-          <div class="amount info">${en(w.amount)}</div></li>`);
+        items.push(`<li class="tap" ${wdAttrs(w)}><div class="ic-wrap">${I.category('card', '#a59f93', 34)}</div>
+          <div class="grow"><div class="name">${esc(w.name)} 引落<small>(${w.count}件)</small></div><div class="sub">${esc(wdNote(w))}</div></div>
+          <div class="amount info">${en(w.amount)}</div><span class="go">${I.ui('chevR', 20, 1.6)}</span></li>`);
       });
       info.txs
         .slice()
@@ -1438,6 +1473,11 @@
       toast('削除しました');
       return;
     }
+    const wd = e.target.closest('[data-wd]');
+    if (wd) {
+      if (await confirmWithdrawal(wd)) renderCalendar();
+      return;
+    }
     const ov = e.target.closest('[data-override]');
     if (ov) {
       const n = await ask(ov.dataset.name + 'のこの月の金額', { withInput: true, value: ov.dataset.amount, okLabel: '変更する' });
@@ -1487,7 +1527,7 @@
       const key = findCard(t.method) || findWallet(t.method) || t.method === 'bank' ? t.method : 'cash';
       const x = byMethod[key] || (byMethod[key] = { amount: 0, count: 0 });
       x.amount += Number(t.amount);
-      x.count += 1;
+      if (!t.adjustment) x.count += 1; // 請求額との差額は件数に入れない
     });
     const s = L.monthSummary(state, reportMonth, L.today());
     const cardIds = state.cards.map((c) => c.id);
@@ -1498,7 +1538,7 @@
       .map((id) => {
         const used = byMethod[id] || { amount: 0, count: 0 };
         const wds = s.withdrawals.filter((w) => w.cardId === id);
-        const sub = [used.count ? used.count + '件' : 'この月の利用なし'].concat(wds.map((w) => `${mdw(w.date)} 引落 ${en(w.amount)}`));
+        const sub = [used.count ? used.count + '件' : used.amount ? '請求額との差額' : 'この月の利用なし'].concat(wds.map((w) => `${mdw(w.date)} 引落 ${en(w.amount)}${w.confirmed ? '(確定)' : ''}`));
         return `<li><div class="grow">${esc(methodName(id))}<div class="small muted">${esc(sub.join(' / '))}</div></div><div>${en(used.amount)}</div></li>`;
       })
       .concat(otherIds.map((id) => `<li><div class="grow">${esc(methodName(id))}<div class="small muted">${byMethod[id].count}件</div></div><div>${en(byMethod[id].amount)}</div></li>`))
@@ -1617,7 +1657,12 @@
     </div>`;
   }
 
-  $('#view-report').addEventListener('click', (e) => {
+  $('#view-report').addEventListener('click', async (e) => {
+    const wd = e.target.closest('[data-wd]');
+    if (wd) {
+      if (await confirmWithdrawal(wd)) renderReport();
+      return;
+    }
     const b = e.target.closest('[data-rmonth]');
     if (!b) return;
     reportMonth = shiftMonthKey(reportMonth, Number(b.dataset.rmonth));
