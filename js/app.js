@@ -66,6 +66,8 @@
       incomes: [{ id: 'fixed-income', name: '固定収入', amount: 0, day: 25, holidayAdjust: 'prev' }],
       incomeOverrides: {},
       withdrawalOverrides: {}, // カードの請求額の確定 { "カード|引落日": 額 }
+      // 毎月の支出(サブスク・固定費)。その日が来たら自動で記録する(L.recurringExpensesDue)
+      recurringExpenses: [],
       categories: defaultCategories(),
       transactions: []
     };
@@ -249,6 +251,15 @@
   function save() {
     writeLocal();
     markDirty();
+  }
+
+  // 毎月の支出で、その日が来たのにまだ記録していない分を記録する。記録したら true
+  function applyRecurring() {
+    const due = L.recurringExpensesDue(state);
+    if (!due.length) return false;
+    state.transactions = state.transactions.concat(due);
+    save();
+    return true;
   }
 
   // ---------- 表示ユーティリティ ----------
@@ -1269,6 +1280,10 @@
 
   $('#delete-btn').addEventListener('click', async () => {
     if (!form.editingId || !(await ask('この記録を削除しますか?', { okLabel: '削除する', danger: true }))) return;
+    const removed = state.transactions.find((t) => t.id === form.editingId);
+    // 毎月の支出で作った記録は、消した月を覚えて作り直さない
+    const rule = removed && removed.recurringId && (state.recurringExpenses || []).find((r) => r.id === removed.recurringId);
+    if (rule) rule.skipped = (rule.skipped || []).concat([removed.period]);
     state.transactions = state.transactions.filter((t) => t.id !== form.editingId);
     save();
     toast('削除しました');
@@ -1398,6 +1413,7 @@
     } else if (card) sub.push(card.name + '・' + mdw(L.withdrawalDateFor(card, tx.date)) + '引落');
     else if (tx.type === 'expense') sub.push(methodName(tx.method));
     if (tx.hours && tx.hours.length) sub.push(hoursText(tx.hours));
+    if (tx.recurringId) sub.push('毎月の支出');
     if (L.isSavings(tx)) sub.push('使えるお金には含めません');
     if (L.isPrepaidUse(state, tx)) {
       // 財布の現金からチャージする電子マネー(PASMO など)は、財布を管理していれば ATM で引き出した時点で支出済み
@@ -1689,6 +1705,21 @@
       .join('');
   }
 
+  function recMethodOptions(selected) {
+    const opts = activeCards()
+      .map((c) => [c.id, c.name])
+      .concat([['bank', 'メイン口座(引き落とし)']])
+      .concat(activeWallets().filter((w) => w.id !== 'cash').map((w) => [w.id, w.name]))
+      .concat([['cash', '現金']]);
+    return opts.map(([v, l]) => `<option value="${esc(v)}" ${v === selected ? 'selected' : ''}>${esc(l)}</option>`).join('');
+  }
+
+  function recPreview(r) {
+    const [y, m] = L.monthKey(L.today()).split('-').map(Number);
+    const date = L.dayOfMonth(y, m, Number(r.day) || 1);
+    return `毎月 ${en(r.amount)}・${methodName(r.method)}。今月は ${mdw(date)} に記録${date <= L.today() ? '済み' : ''}`;
+  }
+
   function cardPreview(c) {
     const t = L.today();
     return `今日使うと ${mdw(L.closingDateFor(c, t))} 締め → ${mdw(L.withdrawalDateFor(c, t))} 引落`;
@@ -1815,6 +1846,32 @@
       </div>
 
       <div class="card">
+        <h3>毎月の支出(サブスク・固定費)</h3>
+        <p class="small muted" style="margin-top:0">毎月同じ日に同じ額を払うもの(スマホ代・動画配信など)を入れておくと、その日が来たら自動で記録します。</p>
+        ${(state.recurringExpenses || [])
+          .map(
+            (r) => `<div class="sub-card" data-rec="${esc(r.id)}">
+            <div class="form-grid">
+              <label>名前<input type="text" data-rf="name" value="${esc(r.name)}" maxlength="20"></label>
+              <label>金額<input type="number" data-rf="amount" inputmode="numeric" min="0" max="${MAX_AMOUNT}" value="${Number(r.amount) || 0}"></label>
+              <label>毎月<select data-rf="day">${dayOptions(r.day)}</select></label>
+              <label>支払方法<select data-rf="method">${recMethodOptions(r.method)}</select></label>
+              <label>カテゴリー<select data-rf="category">${state.categories.expense
+                .filter((c) => !c.archived || c.id === r.category)
+                .map((c) => `<option value="${esc(c.id)}" ${c.id === r.category ? 'selected' : ''}>${esc(c.name)}</option>`)
+                .join('')}</select></label>
+              <label>いつの分から<input type="month" data-rf="start" value="${esc(r.start)}"></label>
+            </div>
+            <div class="preview">${Number(r.amount) > 0 ? recPreview(r) : '0円なので記録しません'}</div>
+            <div class="row-actions"><button type="button" class="btn small danger" data-del-rec="${esc(r.id)}">やめる</button></div>
+          </div>`
+          )
+          .join('')}
+        <button type="button" class="btn" id="add-rec">+ 追加</button>
+        <p class="small muted">1か月だけ金額が違うときは、カレンダーでその記録を直してください。記録を消すと、その月の分は作り直しません。「やめる」を押しても、これまでの記録は残ります。</p>
+      </div>
+
+      <div class="card">
         <h3>使えるお金の計算</h3>
         <div class="stack">
           <p class="small muted" style="margin:0">あと使えるお金 = 先月からの繰越 + 今月の収入 − 今月の支出 − 最低限残しておく額。使わなかった分は翌月に繰り越します。</p>
@@ -1885,13 +1942,26 @@
     const cardEl = t.closest('[data-card]');
     const incEl = t.closest('[data-income]');
     const catEl = t.closest('[data-cat-id]');
+    const recEl = t.closest('[data-rec]');
     const numeric = ['closingDay', 'paymentMonthOffset', 'paymentDay', 'monthlyLimit', 'amount', 'day', 'pointRate', 'pointUnit'];
     let val = numeric.includes(f) ? Math.max(0, Number(t.value) || 0) : t.value.trim();
     if (f === 'pointRate') val = Math.min(100, val);
     if (f === 'pointUnit') val = Math.round(val);
     let rerender = false;
 
-    if (cardEl && f) {
+    if (recEl && t.dataset.rf) {
+      const r = state.recurringExpenses.find((x) => x.id === recEl.dataset.rec);
+      const rf = t.dataset.rf;
+      if (rf === 'amount') r.amount = Math.min(MAX_AMOUNT, Math.max(0, Math.round(Number(t.value) || 0)));
+      else if (rf === 'day') r.day = Number(t.value) || 1;
+      else if (rf === 'name') r.name = t.value.trim() || '毎月の支出';
+      else if (rf === 'start') r.start = t.value || r.start;
+      else r[rf] = t.value;
+      save();
+      const added = applyRecurring();
+      renderMenu();
+      return toast(added ? '今月までの分を記録しました' : '保存しました');
+    } else if (cardEl && f) {
       const c = findCard(cardEl.dataset.card);
       c[f] = f === 'name' ? val || 'カード' : val;
       cardEl.querySelector('.preview').textContent = cardPreview(c);
@@ -2003,6 +2073,14 @@
       state.settings.hourlyRates = (state.settings.hourlyRates || []).concat([0]);
     } else if (t.dataset.delRate !== undefined) {
       state.settings.hourlyRates.splice(Number(t.dataset.delRate), 1);
+    } else if (t.id === 'add-rec') {
+      const first = activeCards()[0];
+      state.recurringExpenses = (state.recurringExpenses || []).concat([
+        { id: uid(), name: 'サブスク', amount: 0, day: 1, method: first ? first.id : 'cash', category: state.categories.expense.some((c) => c.id === 'fixed') ? 'fixed' : state.categories.expense[0].id, start: L.monthKey(L.today()), skipped: [] }
+      ]);
+    } else if (t.dataset.delRec) {
+      if (!(await ask('この毎月の支出をやめますか?これまでの記録は残ります。', { okLabel: 'やめる', danger: true }))) return;
+      state.recurringExpenses = state.recurringExpenses.filter((x) => x.id !== t.dataset.delRec);
     } else if (t.id === 'add-income') {
       state.incomes.push({ id: uid(), name: '固定収入', amount: 0, day: 25, holidayAdjust: 'prev' });
     } else if (t.dataset.delIncome) {
@@ -2255,13 +2333,18 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
     render();
-    syncNow();
+    syncNow().finally(() => {
+      if (applyRecurring()) render();
+    });
   });
   window.addEventListener('online', () => syncNow());
 
   resetForm();
   show('home');
-  syncNow();
+  // 毎月の支出は、サーバーのデータを取り込んでから記録する(別の端末で作った分と重ならないように)
+  syncNow().finally(() => {
+    if (applyRecurring()) render();
+  });
 
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));

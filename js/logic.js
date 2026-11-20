@@ -339,6 +339,29 @@
     const [y, m] = mk.split('-').map(Number);
     return ymd(y, m + 1, 1).slice(0, 7);
   }
+  /*
+   * 毎月の支出(サブスク・固定費)。state.recurringExpenses = [{ id, name, amount, day, method, category, start: 'YYYY-MM', skipped: ['YYYY-MM'] }]
+   * 開始の月から今月まで、その日(31 は末日)が来た月の分の記録を返す。すでにある記録(id が同じ)と、消した月(skipped)は除く。
+   * id は「rec:ルール:月」なので、何度呼んでも、別の端末で作っても同じ記録になる
+   */
+  function recurringExpensesDue(state, todayDate) {
+    const now = todayDate || today();
+    const ids = new Set((state.transactions || []).map((t) => t.id));
+    const out = [];
+    (state.recurringExpenses || []).forEach((r) => {
+      if (!(Number(r.amount) > 0) || !/^\d{4}-\d{2}$/.test(r.start || '')) return;
+      for (let mk = r.start; mk <= monthKey(now); mk = nextMonthKey(mk)) {
+        const [y, m] = mk.split('-').map(Number);
+        const date = dayOfMonth(y, m, Number(r.day) || 1);
+        if (date > now) break;
+        const id = 'rec:' + r.id + ':' + mk;
+        if (ids.has(id) || (r.skipped || []).includes(mk)) continue;
+        out.push({ id, createdAt: date + 'T00:00:00.000Z', date, type: 'expense', amount: Number(r.amount), category: r.category, method: r.method, memo: r.name, recurringId: r.id, period: mk });
+      }
+    });
+    return out;
+  }
+
 
   // 貯蓄(B銀行など)への入金。使えるお金の収入には数えない
   function isSavings(t) {
@@ -882,6 +905,7 @@
     recurringIncomeDate,
     recurringIncomesInMonth,
     nextIncomeDate,
+    recurringExpensesDue,
     cashOutDate,
     cardWithdrawalsInMonth,
     withdrawalAdjustments,
