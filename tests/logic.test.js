@@ -519,3 +519,29 @@ test('請求額の確定:引落額をメールなどの額にし、記録との�
   s.settings.payday = { day: 25, holidayAdjust: 'prev' };
   assert.deepEqual(L.bankOutlook(s, '2026-11-12').laterWithdrawals.map((x) => [x.date, x.amount]), [['2026-11-27', 24800]]);
 });
+
+test('毎月の支出(サブスク):その日が来た月の分を記録する', () => {
+  const s = {
+    settings: {},
+    cards: [cardA, cardB],
+    transactions: [],
+    recurringExpenses: [
+      { id: 'r1', name: 'スマホ', amount: 2970, day: 15, method: 'b', category: 'fixed', start: '2026-10' },
+      { id: 'r2', name: '動画', amount: 990, day: 31, method: 'a', category: 'other', start: '2026-11' },
+      { id: 'r3', name: '止めた', amount: 0, day: 1, method: 'a', category: 'other', start: '2026-10' }
+    ]
+  };
+  const due = L.recurringExpensesDue(s, '2026-11-20');
+  assert.deepEqual(due.map((t) => [t.id, t.date, t.amount, t.method, t.memo]), [
+    ['rec:r1:2026-10', '2026-10-15', 2970, 'b', 'スマホ'],
+    ['rec:r1:2026-11', '2026-11-15', 2970, 'b', 'スマホ']
+  ]);
+  // 作った記録はもう作らない。消した月(skipped)も作らない
+  s.transactions = due.slice(0, 1);
+  s.recurringExpenses[0].skipped = ['2026-11'];
+  assert.deepEqual(L.recurringExpensesDue(s, '2026-11-20'), []);
+  // 末日:11/30 になったら作る。12月の分は 12/15 から
+  assert.deepEqual(L.recurringExpensesDue(s, '2026-12-15').map((t) => t.id), ['rec:r1:2026-12', 'rec:r2:2026-11']);
+  // 作った記録はカードの引落にも入る(10/15 の NL 利用 → 11/27 引落)
+  assert.equal(L.cardWithdrawalsInMonth(s, '2026-11')[0].amount, 2970);
+});
