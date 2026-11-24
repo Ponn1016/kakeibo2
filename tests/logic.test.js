@@ -545,3 +545,32 @@ test('毎月の支出(サブスク):その日が来た月の分を記録する',
   // 作った記録はカードの引落にも入る(10/15 の NL 利用 → 11/27 引落)
   assert.equal(L.cardWithdrawalsInMonth(s, '2026-11')[0].amount, 2970);
 });
+
+test('口座が足りなくなる引落と、今日カードで使ったときの引落日', () => {
+  const s = {
+    settings: { savingsGoal: 10000, payday: { day: 25, holidayAdjust: 'prev' }, bank: { balance: 97235, asOf: '2026-11-25', updatedAt: '2026-11-25T08:00:00.000Z' } },
+    cards: [
+      { id: 'a', name: 'JAL', closingDay: 15, paymentMonthOffset: 1, paymentDay: 10, holidayAdjust: 'next' },
+      { id: 'b', name: 'NL', closingDay: 31, paymentMonthOffset: 1, paymentDay: 26, holidayAdjust: 'next' }
+    ],
+    transactions: [
+      { id: 1, type: 'expense', date: '2026-10-10', amount: 59714, method: 'b' }, // 11/26
+      { id: 2, type: 'expense', date: '2026-11-01', amount: 77061, method: 'a' } // 12/10
+    ]
+  };
+  const b = L.bankOutlook(s, '2026-11-25');
+  assert.equal(b.payday, '2026-12-25');
+  assert.equal(b.available, 97235 - 59714 - 77061 - 10000);
+  assert.deepEqual(b.shortfall, { date: '2026-12-10', name: 'JAL', amount: 39540 });
+  // 足りていれば null
+  s.settings.bank.balance = 200000;
+  assert.equal(L.bankOutlook(s, '2026-11-25').shortfall, null);
+  // 今日(11/25)使うと:JAL は 1/12(1/10 は日曜・1/11 は成人の日)、NL は 12/28(12/26 は土曜)。どちらも 12/25 の給料の後
+  const t = L.cardTimingToday(s, '2026-11-25');
+  assert.equal(t.payday, '2026-12-25');
+  assert.deepEqual(t.cards.map((c) => [c.name, c.date, c.beforePayday]), [['JAL', '2027-01-12', false], ['NL', '2026-12-28', false]]);
+  // Paidy(末日締め・翌月12日)は 11/26 に使うと 12/14 引落で、12/25 の給料日より前
+  s.cards.push({ id: 'p', name: 'Paidy', closingDay: 31, paymentMonthOffset: 1, paymentDay: 12, holidayAdjust: 'next' });
+  const p = L.cardTimingToday(s, '2026-11-26').cards[2];
+  assert.deepEqual([p.date, p.beforePayday], ['2026-12-14', true]);
+});

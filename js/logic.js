@@ -643,6 +643,10 @@
       running -= w.amount;
       return { ...w, balanceAfter: running };
     });
+    // 残高がはじめてマイナスになる引落と、いちばん足りなくなる額(残しておく額は含めない)
+    const firstShort = timeline.find((w) => w.balanceAfter < 0);
+    const lowest = timeline.reduce((m, w) => Math.min(m, w.balanceAfter), balance - chargesSince);
+    const shortfall = firstShort ? { date: firstShort.date, name: firstShort.name, amount: -lowest } : null;
 
     return {
       balance,
@@ -655,7 +659,25 @@
       pendingWithdrawals,
       chargesSince,
       reserve,
+      shortfall,
       available: balance - pendingWithdrawals - chargesSince - reserve
+    };
+  }
+
+  /*
+   * 今日カードで使ったら、それぞれいつ引き落とされるか。次の給料日より前に落ちるカードは beforePayday
+   */
+  function cardTimingToday(state, todayDate) {
+    const now = todayDate || today();
+    const { next: payday } = paydaysAround(state, now);
+    return {
+      payday,
+      cards: (state.cards || [])
+        .filter((c) => !c.archived)
+        .map((c) => {
+          const date = withdrawalDateFor(c, now);
+          return { id: c.id, name: c.name, date, beforePayday: date < payday };
+        })
     };
   }
 
@@ -913,6 +935,7 @@
     carryOver,
     savingsBalance,
     bankOutlook,
+    cardTimingToday,
     paydaysAround,
     txPoints,
     pointsSummary,
