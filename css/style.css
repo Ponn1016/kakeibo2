@@ -295,6 +295,9 @@ main { max-width: 600px; margin: 0 auto; padding: 0 16px 16px; }
 .coupon-select[hidden] { display: none; }
 .nl-row #nl-pts { font-size: 13px; color: var(--mint-strong); font-variant-numeric: tabular-nums; }
 .nl-note { flex-basis: 100%; margin: 0; font-size: 11px; color: var(--muted); }
+.card-hint { margin-top: 12px; border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; }
+.card-hint .hint-head { display: flex; align-items: baseline; gap: 6px; font-size: 14px; }
+.card-hint .hint-head b { font-size: 20px; color: var(--text-strong); font-variant-numeric: tabular-nums; }
 .coupon-banner { display: flex; align-items: center; gap: 10px; margin-top: 12px; border: 1px solid var(--warn); border-radius: 14px; padding: 10px 14px; font-size: 13px; }
 .coupon-banner .grow { flex: 1; min-width: 0; }
 .point-rate input { width: 64px; padding: 6px 8px; font-size: 16px; font-weight: 700; text-align: right; outline: none; }

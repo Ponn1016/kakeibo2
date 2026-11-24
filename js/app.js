@@ -556,10 +556,24 @@
         <div class="meter-labels"><span>使った ${en(s.spent)}</span><span>予算 ${en(budget)}</span></div>
         <p class="budget-line">予算 = ${s.carry ? '先月からの繰越 ' + en(s.carry) + ' + ' : ''}今月の収入 ${en(s.income)}${s.savings ? ' − 残しておく ' + en(s.savings) : ''}</p>
       </section>
+      ${cardHint(Math.max(0, s.remaining - plan))}
       ${couponBanner()}
       ${bankCard()}
       <button type="button" class="link-row" data-go="report">内訳・引落予定を見る${I.ui('chevR', 18, 1.8)}</button>
       ${demo}`;
+  }
+
+  // カードで使うなら:いくらまでなら来月以降の支払いが回るかと、今日使った分がいつ引き落とされるか
+  function cardHint(free) {
+    const t = L.cardTimingToday(state);
+    if (!t.cards.length) return '';
+    const after = t.cards.filter((c) => !c.beforePayday);
+    const before = t.cards.filter((c) => c.beforePayday);
+    return `<section class="card-hint">
+      <div class="hint-head"><span>カードなら</span><b>${en(free)}</b><span>まで使えます</span></div>
+      ${after.length ? `<p class="small" style="margin:4px 0 0">今日使うと ${after.map((c) => esc(c.name) + ' → ' + mdw(c.date)).join('・')} 引落(${mdw(t.payday)}の給料の後)</p>` : ''}
+      ${before.length ? `<p class="small" style="margin:4px 0 0;color:var(--warn)">${before.map((c) => esc(c.name) + ' は ' + mdw(c.date)).join('・')} 引落で、${mdw(t.payday)}の給料より前です</p>` : ''}
+    </section>`;
   }
 
   // 月初の「Vクーポン再獲得」(月ごとに獲得し直すクーポンが今月有効なあいだ、「獲得した」を押すまで出す)
@@ -585,6 +599,7 @@
       <div class="bank-head"><span class="bank-label">メイン口座から出せるお金</span><button type="button" class="btn small" data-bank-update>残高を更新</button></div>
       <div class="bank-big ${b.available < 0 ? 'minus' : ''}">${b.available < 0 ? '-' : ''}${num(Math.abs(b.available))}<span>円</span></div>
       <p class="budget-line" style="text-align:left">残高 ${en(b.balance)}(${mdw(b.asOf)}時点)− ${mdw(b.payday)}の給料日までの引落 ${en(b.pendingWithdrawals)}${b.chargesSince ? ' − チャージ・引き出し ' + en(b.chargesSince) : ''}${b.reserve ? ' − 残しておく ' + en(b.reserve) : ''}</p>
+      ${b.shortfall ? `<p class="small" style="margin:6px 0 0;color:var(--danger)"><b>${mdw(b.shortfall.date)}の${esc(b.shortfall.name)}の引落で ${en(b.shortfall.amount)} 足りません</b>(${mdw(b.payday)}の給料までに用意が必要)</p>` : ''}
       ${b.stale ? '<p class="small" style="margin:6px 0 0;color:var(--warn)">残高を入れた後に給料日が過ぎています。給料が入った残高に更新してください。</p>' : ''}
     </section>`;
   }
