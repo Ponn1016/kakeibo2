@@ -80,7 +80,12 @@
     s.settings.savingsGoal = 10000;
     s.settings.savingsPlan = 10000;
     // 口座の残高は記録より後に入れたことにする(チャージ・引き出しは残高に反映済み)
-    s.settings.bank = { balance: 98000, asOf: t, updatedAt: '2000-01-02T00:00:00.000Z' };
+    s.settings.bank = { balance: 9000, asOf: t, updatedAt: '2000-01-02T00:00:00.000Z' };
+    // Paidy(後払い。3回払いの例)と、毎月の支出(サブスク)の例
+    s.cards.push({ id: 'paidy', name: 'Paidy', closingDay: 31, paymentMonthOffset: 1, paymentDay: 12, holidayAdjust: 'next', monthlyLimit: 0, pointRate: 0, pointUnit: 0 });
+    s.recurringExpenses = [
+      { id: 'demo-sub1', name: '動画配信', amount: 990, day: 5, method: 'cardB', category: 'fixed', start: L.monthKey(L.addDays(t, -40)), skipped: [] }
+    ];
     // 財布の管理は最初から(残高 2,000円 から)
     const cash = s.wallets.find((w) => w.id === 'cash');
     cash.since = '2000-01-01T00:00:00.000Z';
@@ -98,6 +103,7 @@
       [-15, 'income', 8000, 'extra', 'cash', 'フリマ'],
       [-20, 'expense', 4800, 'fixed', 'cardB', '電気'],
       [-19, 'expense', 3200, 'fixed', 'cardB', 'スマホ'],
+      [-11, 'expense', 15000, 'daily', 'paidy', '家電', null, { installments: 3 }],
       [-16, 'expense', 10000, 'other', 'bank', 'ATM引き出し', null, { chargeTo: 'cash' }],
       [-14, 'expense', 1065, 'food', 'cash', ''],
       [-12, 'expense', 1140, 'daily', 'cardB', '洗剤'],
