@@ -745,6 +745,15 @@
   }
 
   // カレンダー用の日別集計
+  /*
+   * カレンダー用の日別集計。カレンダーは「その日に実際に使った額」を見るためのもの:
+   * 現金・Suica などでの支払いも、使った日に数える。チャージ・ATM での引き出し(chargeTo があるもの)は
+   * お金の置き場所を変えただけなので数えない。あと使えるお金(いつ支出に数えるか)とは別の見方
+   */
+  function isTransferExpense(t) {
+    return t.type === 'expense' && !!t.chargeTo;
+  }
+
   function dailyTotals(state, mk) {
     const days = {};
     const get = (d) => {
@@ -755,7 +764,7 @@
       if (monthKey(t.date) !== mk) return;
       const day = get(t.date);
       day.txs.push(t);
-      if (t.type === 'expense' && !isPrepaidUse(state, t)) day.expense += Number(t.amount);
+      if (t.type === 'expense' && !isTransferExpense(t)) day.expense += Number(t.amount);
       else if (t.type === 'income' && !isSavings(t)) day.income += Number(t.amount);
       // type 'charge'(コード決済へのチャージ)は自分のお金の移動なので、収入にも支出にも数えない
     });
@@ -963,6 +972,7 @@
     couponReminders,
     isSavings,
     dailyTotals,
+    isTransferExpense,
     suggestPayment,
     walletBalance,
     isPrepaidUse,
