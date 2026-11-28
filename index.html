@@ -48,6 +48,13 @@
         </div>
       </div>
       <div class="hourly" id="hourly-block"></div>
+      <div class="form-row" id="receive-row" hidden>
+        <div class="row-label">受け取り</div>
+        <div class="seg seg-inline" id="receive-mode">
+          <button type="button" data-receive="bank">口座に入金</button>
+          <button type="button" data-receive="cash">現金(財布)</button>
+        </div>
+      </div>
       <div class="form-row">
         <label class="row-label" for="amount" id="amount-label">支出</label>
         <input type="text" id="amount" class="pill amount-input" inputmode="numeric" placeholder="0" autocomplete="off">

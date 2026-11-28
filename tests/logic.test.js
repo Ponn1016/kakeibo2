@@ -574,3 +574,26 @@ test('口座が足りなくなる引落と、今日カードで使ったとき�
   const p = L.cardTimingToday(s, '2026-11-26').cards[2];
   assert.deepEqual([p.date, p.beforePayday], ['2026-12-14', true]);
 });
+
+test('現金で受け取った収入は財布の残高に足す(口座の見通しには入れない)', () => {
+  const s = {
+    settings: { savingsGoal: 0, bank: { balance: 50000, asOf: '2026-11-20', updatedAt: '2026-11-20T00:00:00.000Z' } },
+    cards: [],
+    wallets: [{ id: 'cash', name: '現金', chargeFrom: 'bank', since: '2026-11-01T00:00:00.000Z', balanceAdjust: 2000 }],
+    transactions: [
+      { id: 1, type: 'income', date: '2026-11-28', amount: 10000, category: 'extra', method: 'cash', receivedIn: 'cash', createdAt: '2026-11-28T00:00:00.000Z' },
+      { id: 2, type: 'income', date: '2026-11-25', amount: 80000, category: 'salary', method: 'cash', createdAt: '2026-11-25T00:00:00.000Z' }, // 口座に入金
+      { id: 3, type: 'expense', date: '2026-11-28', amount: 3700, category: 'other', method: 'cash', createdAt: '2026-11-28T01:00:00.000Z' }
+    ]
+  };
+  assert.equal(L.walletBalance(s, s.wallets[0]), 2000 + 10000 - 3700);
+  // 収入としては両方数える。財布に入れた 10,000円 は(ATM で引き出したときと同じく)入れた時点で支出、
+  // 財布からの支払い 3,700円 は数えない
+  assert.equal(L.monthSummary(s, '2026-11', '2026-11-28').income, 90000);
+  assert.equal(L.monthSummary(s, '2026-11', '2026-11-28').spent, 10000);
+  // 財布を管理していないときは、ただの収入(現金の支払いは使ったときに支出)
+  const u = { ...s, wallets: [{ id: 'cash', name: '現金', chargeFrom: 'bank' }] };
+  assert.equal(L.monthSummary(u, '2026-11', '2026-11-28').spent, 3700);
+  // 口座から出たお金には入らない
+  assert.equal(L.bankOutlook(s, '2026-11-28').chargesSince, 0);
+});
