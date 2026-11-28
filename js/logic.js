@@ -276,6 +276,18 @@
    * (まとまったお金が一度に出ていかないように分割しているので)。amount はその月に数える額。
    * 請求額を確定して記録との差があれば、その差額も引落の月に足す(withdrawalAdjustments)
    */
+  /*
+   * 現金で受け取って財布に入れた収入。財布を管理しているときは、財布のお金は入れた時点で支出に数える
+   * (ATM で引き出したときと同じ)ので、受け取った額を財布に入れた支出としても数える
+   */
+  function cashIncomeToWallet(state, mk) {
+    const cash = (state.wallets || []).find((w) => w.id === 'cash' && w.chargeFrom === 'bank' && w.since);
+    if (!cash) return [];
+    return (state.transactions || [])
+      .filter((t) => t.type === 'income' && t.receivedIn === 'cash' && monthKey(t.date) === mk && String(t.createdAt) >= cash.since)
+      .map((t) => ({ id: 'cashin:' + t.id, type: 'expense', date: t.date, method: 'cash', category: 'other', memo: '現金の収入を財布へ', amount: Number(t.amount), cashIn: true }));
+  }
+
   function spendingItems(state, mk) {
     const items = [];
     (state.transactions || []).forEach((t) => {
@@ -286,7 +298,7 @@
           .forEach((p) => items.push({ ...t, amount: p.amount, installment: p }));
       } else if (monthKey(t.date) === mk) items.push(t);
     });
-    return items.concat(withdrawalAdjustments(state, mk));
+    return items.concat(cashIncomeToWallet(state, mk), withdrawalAdjustments(state, mk));
   }
 
   // 指定月に引き落とされるカード利用額(カードごと)
@@ -860,6 +872,8 @@
       if (wallet.since && String(t.createdAt) < wallet.since) return;
       // 支出扱いのチャージ・引き出しは、支出(chargeTo にコード決済などの id)として記録している
       if (t.type === 'expense' && t.chargeTo === wallet.id) bal += Number(t.amount);
+      // 現金で受け取った収入(receivedIn 'cash')は財布に入る
+      if (t.type === 'income' && t.receivedIn === 'cash' && wallet.id === 'cash') bal += Number(t.amount);
       if (t.method !== wallet.id) return;
       if (t.type === 'charge') bal += Number(t.amount);
       else if (t.type === 'expense') bal -= Number(t.amount);

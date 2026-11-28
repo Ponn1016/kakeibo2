@@ -702,7 +702,7 @@
   // work: 時給ごとの入力中の時間と分 { "1830": { h: "7", m: "30" }, ... }
   // point: この支出をポイント還元(7%還元など)の対象にするか
   // pointRate: この支出の還元率(%)。オンにしたときはメニューの初期値が入る
-  const form = { editingId: null, type: 'expense', date: L.today(), amount: '', category: null, method: 'cash', memo: '', work: {}, incomeMode: 'hourly', point: false, pointRate: '', pointUnit: 0, nl7: false, coupon: '', installments: 1 };
+  const form = { editingId: null, type: 'expense', date: L.today(), amount: '', category: null, method: 'cash', memo: '', work: {}, incomeMode: 'hourly', point: false, pointRate: '', pointUnit: 0, nl7: false, coupon: '', installments: 1, receivedIn: 'bank' };
   let methodTouched = false;
   let returnView = 'home'; // 編集を終えたときに戻る画面
 
@@ -721,6 +721,7 @@
     form.nl7 = false;
     form.coupon = '';
     form.installments = 1;
+    form.receivedIn = 'bank';
     methodTouched = false;
   }
 
@@ -748,7 +749,8 @@
       pointUnit: Number(tx.pointUnit) || 0,
       nl7: !!tx.nl7,
       coupon: tx.coupon || '',
-      installments: Number(tx.installments) > 1 ? Number(tx.installments) : 1
+      installments: Number(tx.installments) > 1 ? Number(tx.installments) : 1,
+      receivedIn: tx.receivedIn === 'cash' ? 'cash' : 'bank'
     });
     methodTouched = true;
     show('input');
@@ -775,6 +777,9 @@
 
     const hourly = isHourly();
     $('#income-mode-row').hidden = !isSalary();
+    // 収入の受け取り方:現金で受け取ったら財布の残高に足す(貯蓄は別の口座なので出さない)
+    $('#receive-row').hidden = isExpense || L.isSavings({ type: 'income', category: form.category });
+    document.querySelectorAll('#receive-mode button').forEach((b) => b.classList.toggle('active', b.dataset.receive === form.receivedIn));
     document.querySelectorAll('#income-mode button').forEach((b) => b.classList.toggle('active', b.dataset.mode === form.incomeMode));
     $('#hourly-block').hidden = !hourly;
     $('#amount').readOnly = hourly;
@@ -876,6 +881,13 @@
     e.target.value = v;
     form.work[rate] = { ...(form.work[rate] || {}), [part]: v };
     updateHourly();
+  });
+
+  $('#receive-mode').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-receive]');
+    if (!b) return;
+    form.receivedIn = b.dataset.receive;
+    renderInput();
   });
 
   $('#income-mode').addEventListener('click', (e) => {
@@ -1253,6 +1265,7 @@
       if (form.pointUnit > 0) data.pointUnit = form.pointUnit;
     }
     if (data.type === 'expense' && findCard(data.method) && form.installments > 1) data.installments = form.installments;
+    if (data.type === 'income' && form.receivedIn === 'cash' && !L.isSavings(data)) data.receivedIn = 'cash';
     if (data.type === 'expense' && L.isSmbcCard(state, data.method)) {
       if (form.coupon) data.coupon = form.coupon;
       if (form.nl7 && L.smbcTxInfo(state, { ...data, nl7: true }).tagged) data.nl7 = true;
@@ -1265,6 +1278,7 @@
       delete tx.nl7;
       delete tx.coupon;
       delete tx.installments;
+      delete tx.receivedIn;
       Object.assign(tx, data);
       save();
       toast('変更しました');
@@ -1288,6 +1302,7 @@
     form.nl7 = false;
     form.coupon = '';
     form.installments = 1;
+    form.receivedIn = 'bank';
     methodTouched = false;
     $('#amount').blur();
     renderInput();
@@ -1429,6 +1444,7 @@
     else if (tx.type === 'expense') sub.push(methodName(tx.method));
     if (tx.hours && tx.hours.length) sub.push(hoursText(tx.hours));
     if (tx.recurringId) sub.push('毎月の支出');
+    if (tx.type === 'income' && tx.receivedIn === 'cash') sub.push(cashTracked() ? '現金で受け取り・財布へ(入れた時点で支出に数える)' : '現金で受け取り');
     if (L.isSavings(tx)) sub.push('使えるお金には含めません');
     if (L.isPrepaidUse(state, tx)) {
       // 財布の現金からチャージする電子マネー(PASMO など)は、財布を管理していれば ATM で引き出した時点で支出済み
