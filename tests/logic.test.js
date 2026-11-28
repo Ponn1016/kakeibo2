@@ -286,7 +286,9 @@ test('カードからチャージする電子マネー(Suica)は、チャージ�
   assert.equal(L.walletBalance(s, s.wallets[1]), 600);
   assert.equal(L.isPrepaidUse(s, s.transactions[2]), true);
   assert.equal(L.isPrepaidUse(s, s.transactions[4]), false);
-  assert.equal(L.dailyTotals(s, '2026-10')['2026-10-06'].expense, 0);
+  // カレンダーは使った日に使った額(Suica の 500円)。チャージは数えない
+  assert.equal(L.dailyTotals(s, '2026-10')['2026-10-06'].expense, 500);
+  assert.equal(L.dailyTotals(s, '2026-10')['2026-10-05'].expense, 0);
   // 口座の見通し:Suica のチャージはカードの引落(11/27)として、PayPay のチャージは口座からのチャージとして引く
   // (11/27 は次の給料日 10/23 より後なので、今は引かずに一覧だけに出す)
   const b = L.bankOutlook(s, '2026-10-07');
@@ -440,7 +442,10 @@ test('財布の現金からチャージする電子マネー(PASMO):チャージ
   assert.equal(L.walletBalance(s, s.wallets[0]), 7000);
   assert.equal(L.walletBalance(s, s.wallets[1]), 2822);
   assert.equal(L.isPrepaidUse(s, s.transactions[2]), true);
-  assert.equal(L.dailyTotals(s, '2026-11')['2026-11-03'].expense, 0);
+  // カレンダーは使った日に使った額。ATM・チャージは数えない
+  assert.equal(L.dailyTotals(s, '2026-11')['2026-11-03'].expense, 178);
+  assert.equal(L.dailyTotals(s, '2026-11')['2026-11-01'].expense, 0);
+  assert.equal(L.dailyTotals(s, '2026-11')['2026-11-02'].expense, 0);
   // 財布を管理していないとき:チャージが現金の支払いとして支出、PASMO で使った分は数えない
   const u = tracked(undefined);
   u.transactions.shift();

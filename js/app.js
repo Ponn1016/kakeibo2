@@ -1378,8 +1378,9 @@
     $('#cal').innerHTML = html;
 
     const s = L.monthSummary(state, calMonth, t);
+    // 使った額(チャージ・ATM での引き出しは含めない)。分割払いも買った日の額で数える
     const expense = state.transactions
-      .filter((x) => x.type === 'expense' && L.monthKey(x.date) === calMonth)
+      .filter((x) => x.type === 'expense' && L.monthKey(x.date) === calMonth && !L.isTransferExpense(x))
       .reduce((a, x) => a + Number(x.amount), 0);
     const net = s.income - expense;
     $('#cal-totals').innerHTML = `
@@ -1418,7 +1419,8 @@
         .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
         .forEach((tx) => {
           if (tx.type === 'charge') return items.push(chargeRow(tx));
-          if (L.isSavings(tx) || L.isPrepaidUse(state, tx)) return items.push(txRow(tx));
+          // カレンダーは使った日に使った額:現金・Suica での支払いは数え、チャージ・ATM での引き出しは数えない
+          if (L.isSavings(tx) || L.isTransferExpense(tx)) return items.push(txRow(tx));
           net += tx.type === 'income' ? Number(tx.amount) : -Number(tx.amount);
           counted++;
           items.push(txRow(tx));
